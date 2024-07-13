@@ -1,9 +1,8 @@
 # streamlit_app.py
 import streamlit as st
-from utils.s3_operations import list_s3_files, select_file_from_s3, upload_file_to_s3, delete_file_from_s3
+from utils.s3_operations import list_s3_files
 from utils.textraction import extract_tables_from_document, get_table_by_page
 import os
-from PIL import Image
 from dotenv import load_dotenv
 
 def main():
@@ -14,17 +13,15 @@ def main():
         "Choose an operation:",
         [
             "List files", 
-            "Select file",
-            "Textract tables", 
-            "Upload file", 
-            "Delete file"
+            # "Select file",
+            # "Textract tables", 
+            # "Upload file", 
+            # "Delete file"
             ]
     )
 
-    bucket_name = st.text_input("Enter S3 bucket name:", value='aeonllmbucket')
-
     if operation == "List files":
-        files = list_s3_files(bucket_name)
+        files = list_s3_files()
         if files:
             st.write("Files in bucket:")
             selected_file_path = st.selectbox("Choose a file to extract tables from:", files)
@@ -58,29 +55,29 @@ def main():
         else:
             st.write("No files found.")
 
-    elif operation == "Select file":
-        if st.button("Show files"):
-            files = select_file_from_s3(bucket_name, "")
-            # Instead of printing to console, show the files in Streamlit
-            if files:
-                selected_file = st.selectbox("Choose a file:", files)
-                # Here you can decide what action to take after selecting the file, e.g., display its content or metadata.
+    # elif operation == "Select file":
+    #     if st.button("Show files"):
+    #         files = select_file_from_s3(bucket_name, "")
+    #         # Instead of printing to console, show the files in Streamlit
+    #         if files:
+    #             selected_file = st.selectbox("Choose a file:", files)
+    #             # Here you can decide what action to take after selecting the file, e.g., display its content or metadata.
 
-    elif operation == "Upload file":
-        uploaded_file = st.file_uploader("Choose a file")
-        if uploaded_file:
-            s3_file_name = st.text_input("Enter desired S3 file name or leave blank:")
-            if st.button("Upload"):
-                # Assuming `upload_file_to_s3` returns a response or message
-                response = upload_file_to_s3(uploaded_file, bucket_name, s3_file_name or uploaded_file.name)
-                st.write(response)
+    # elif operation == "Upload file":
+    #     uploaded_file = st.file_uploader("Choose a file")
+    #     if uploaded_file:
+    #         s3_file_name = st.text_input("Enter desired S3 file name or leave blank:")
+    #         if st.button("Upload"):
+    #             # Assuming `upload_file_to_s3` returns a response or message
+    #             response = upload_file_to_s3(uploaded_file, bucket_name, s3_file_name or uploaded_file.name)
+    #             st.write(response)
 
-    elif operation == "Delete file":
-        file_to_delete = st.text_input("Enter the name of the file to delete:")
-        if st.button("Delete"):
-            # Assuming `delete_file_from_s3` returns a response or message
-            response = delete_file_from_s3(bucket_name, file_to_delete)
-            st.write(response)
+    # elif operation == "Delete file":
+    #     file_to_delete = st.text_input("Enter the name of the file to delete:")
+    #     if st.button("Delete"):
+    #         # Assuming `delete_file_from_s3` returns a response or message
+    #         response = delete_file_from_s3(bucket_name, file_to_delete)
+    #         st.write(response)
             
     if operation == "Textract Tables":
         selected_file_path = st.text_input("Enter the S3 file path:")

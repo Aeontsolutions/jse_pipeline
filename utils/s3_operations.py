@@ -1,9 +1,8 @@
 import boto3
-from botocore.exceptions import NoCredentialsError
 
 s3 = boto3.client('s3')
 
-def list_s3_files(bucket_name):
+def list_s3_files():
     """
     List all files in the specified S3 bucket.
 
@@ -16,8 +15,8 @@ def list_s3_files(bucket_name):
     s3_client = boto3.client('s3')
     files = []
 
-    bucket_name = "aeonllmbucket"
-    prefix = "JSE_Financials/input_financials"
+    bucket_name = "jse-bi-bucket"
+    prefix = "input-financials/"
     extension = ".pdf"  # Hardcoding to only search for PDFs
 
     # List objects within the specified bucket with the specified prefix
@@ -35,7 +34,7 @@ def select_file_from_s3(files):
     selected_idx = int(input("Enter the number of the PDF you want to select: ")) - 1
     selected_file = files[selected_idx]
     # Return the complete S3 path
-    return f"s3://aeonllmbucket/{selected_file}"
+    return f"s3://jse-bi-bucket/{selected_file}"
 
 def upload_file_to_s3(file_name, bucket_name, s3_file_name=None):
     """
