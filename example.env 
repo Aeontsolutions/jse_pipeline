@@ -1,0 +1,9 @@
+AWS_ACCESS_KEY_ID = AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY = AWS_SECRET_ACCESS_KEY
+AWS_DEFAULT_REGION = 'us-east-1'
+
+extractor = Textractor(region_name=environ.get('AWS_DEFAULT_REGION'))
+
+staging_url = staging_url
+s3_input_bucket = s3_input_bucket_url
+s3_output_bucket = s3_output_bucket_url
