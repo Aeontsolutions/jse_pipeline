@@ -81,6 +81,7 @@ watchdog = "3.0.0"
 xarray = "2023.9.0"
 xlsxwriter = "3.0.9"
 zipp = "3.17.0"
+streamlit-pdf-viewer = "^0.0.14"
 
 
 [build-system]
