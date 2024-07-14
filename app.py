@@ -7,36 +7,47 @@ from dotenv import load_dotenv
 
 def main():
     st.title("Financials Extraction App")
+    
+    # Initialize extracted_table
+    extracted_table = None
+    
+    # The sidebar
+    with st.sidebar:
 
-    # Dropdown menu for user to select an action
-    operation = st.selectbox(
-        "Choose an operation:",
-        [
-            "List files", 
-            # "Select file",
-            # "Textract tables", 
-            # "Upload file", 
-            # "Delete file"
-            ]
-    )
-
-    if operation == "List files":
         files = list_s3_files()
         if files:
-            st.write("Files in bucket:")
+
             selected_file_path = st.selectbox("Choose a file to extract tables from:", files)
-            
-            if st.button("Extract Tables"):
+                
+            find_tables = st.button("Find Tables")
+            if find_tables:
                 temp_file_path = download_pdf_from_s3(selected_file_path)
                 tables_found = extract_tables_from_document(f"s3://jse-bi-bucket/{selected_file_path}")
-                            
-                col1, col2 = st.columns(2)
-                with col1:
-                    if tables_found:
-                        pdf_viewer(temp_file_path, pages_to_render=[table.page for table in tables_found])
-                    
-                with col2:
-                    st.write("Extracted Table:")                    
+                                
+                if tables_found:
+                    pdf_viewer(temp_file_path, pages_to_render=[table.page for table in tables_found])
+        
+    if 'tables_found' in locals():
+        page_num = st.selectbox("Choose a page to extract:", 
+                                [table.page for table in tables_found],
+                                index=None)
+        if page_num is not None: 
+            selected_table = get_table_by_page(tables_found, page_num)
+            if selected_table:
+                extracted_table = selected_table.to_pandas(use_columns=True)
+                st.dataframe(extracted_table)
+    #         for table in tables_found:
+    #             if st.button(f"Textract {table.title.text}"):
+    #                 st.write(f'Table title: {table.title.text}, page number: {table.page}')
+    #                 extracted_table = table.to_pandas(use_columns=True)
+    #     else:
+    #         st.write("No tables found.")
+            
+    # if extracted_table is not None:
+    #     st.dataframe(extracted_table)
+    # else:
+    #     st.write("No table found.")
+        
         #         tables_found = extract_tables_from_document(f"s3://jse-bi-bucket/{selected_file_path}")
         #         if tables_found:
         #             st.write(f"{len(tables_found)} tables found!")
@@ -89,20 +100,20 @@ def main():
     #         response = delete_file_from_s3(bucket_name, file_to_delete)
     #         st.write(response)
             
-    if operation == "Textract Tables":
-        selected_file_path = st.text_input("Enter the S3 file path:")
-        if st.button("Extract Tables"):
-            tables_found = extract_tables_from_document(selected_file_path)
-            if tables_found:
-                st.write(f"{len(tables_found)} tables found!")
-                page_num = st.number_input("Enter the page number of the table you're interested in:", min_value=1, step=1)
-                selected_table = get_table_by_page(tables_found, page_num)
-                if selected_table:
-                    st.write(f'Selected table title: {selected_table.title.text}, page number: {selected_table.page}')
-                else:
-                    st.write(f"No table found on page {page_num}.")
-            else:
-                st.write("No tables matching the desired patterns were found.")
+    # if operation == "Textract Tables":
+    #     selected_file_path = st.text_input("Enter the S3 file path:")
+    #     if st.button("Extract Tables"):
+    #         tables_found = extract_tables_from_document(selected_file_path)
+    #         if tables_found:
+    #             st.write(f"{len(tables_found)} tables found!")
+    #             page_num = st.number_input("Enter the page number of the table you're interested in:", min_value=1, step=1)
+    #             selected_table = get_table_by_page(tables_found, page_num)
+    #             if selected_table:
+    #                 st.write(f'Selected table title: {selected_table.title.text}, page number: {selected_table.page}')
+    #             else:
+    #                 st.write(f"No table found on page {page_num}.")
+    #         else:
+    #             st.write("No tables matching the desired patterns were found.")
 
 if __name__ == "__main__":
     
