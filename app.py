@@ -1,6 +1,6 @@
-# streamlit_app.py
 import streamlit as st
-from utils.s3_operations import list_s3_files
+from streamlit_pdf_viewer import pdf_viewer
+from utils.s3_operations import list_s3_files, download_pdf_from_s3
 from utils.textraction import extract_tables_from_document, get_table_by_page
 import os
 from dotenv import load_dotenv
@@ -27,33 +27,43 @@ def main():
             selected_file_path = st.selectbox("Choose a file to extract tables from:", files)
             
             if st.button("Extract Tables"):
-                tables_found = extract_tables_from_document(f"s3://aeonllmbucket/{selected_file_path}")
-                if tables_found:
-                    st.write(f"{len(tables_found)} tables found!")
-                    # Create a column on the right
-                    col1, col2 = st.columns(2)  # Adjust ratios as needed
-                    
-                    with col1:  # Show tables in the left column
-                        for table in tables_found:
-                            st.write(f'Table title: {table.title.text}, page number: {table.page}')
-
-                    with col2:  # Show images in the right column  
-                        page_num = st.number_input("Enter the page number of the table you're interested in:", min_value=1, step=1)
-                        if page_num > 0 and page_num <= len(tables_found):
-                            selected_table = get_table_by_page(tables_found, page_num)
+                temp_file_path = download_pdf_from_s3(selected_file_path)
+                tables_found = extract_tables_from_document(f"s3://jse-bi-bucket/{selected_file_path}")
                             
-                            extracted_table = selected_table.to_pandas(use_columns=True)
+                col1, col2 = st.columns(2)
+                with col1:
+                    if tables_found:
+                        pdf_viewer(temp_file_path, pages_to_render=[table.page for table in tables_found])
                     
-                            st.dataframe(extracted_table.head())
+                with col2:
+                    st.write("Extracted Table:")                    
+        #         tables_found = extract_tables_from_document(f"s3://jse-bi-bucket/{selected_file_path}")
+        #         if tables_found:
+        #             st.write(f"{len(tables_found)} tables found!")
+        #             # Create a column on the right
+        #             col1, col2 = st.columns(2)  # Adjust ratios as needed
+                    
+        #             with col1:  # Show tables in the left column
+        #                 for table in tables_found:
+        #                     st.write(f'Table title: {table.title.text}, page number: {table.page}')
+
+        #             with col2:  # Show images in the right column  
+        #                 page_num = st.number_input("Enter the page number of the table you're interested in:", min_value=1, step=1)
+        #                 if page_num > 0 and page_num <= len(tables_found):
+        #                     selected_table = get_table_by_page(tables_found, page_num)
+                            
+        #                     extracted_table = selected_table.to_pandas(use_columns=True)
+                    
+        #                     st.dataframe(extracted_table.head())
                           
-                        else:
-                            st.write(f"No table found on page {page_num}.")
+        #                 else:
+        #                     st.write(f"No table found on page {page_num}.")
                     
                     
-                else:
-                    st.write("No tables matching the desired patterns were found.")
-        else:
-            st.write("No files found.")
+        #         else:
+        #             st.write("No tables matching the desired patterns were found.")
+        # else:
+        #     st.write("No files found.")
 
     # elif operation == "Select file":
     #     if st.button("Show files"):

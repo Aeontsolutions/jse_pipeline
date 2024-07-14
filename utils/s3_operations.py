@@ -1,4 +1,5 @@
 import boto3
+import tempfile
 
 s3 = boto3.client('s3')
 
@@ -35,6 +36,35 @@ def select_file_from_s3(files):
     selected_file = files[selected_idx]
     # Return the complete S3 path
     return f"s3://jse-bi-bucket/{selected_file}"
+
+def download_pdf_from_s3(pdf_key, temp_dir=None):
+    """
+    Downloads a PDF file from an S3 bucket and stores it in a temporary location.
+
+    Args:
+        pdf_key (str): The key of the PDF file in the S3 bucket.
+        temp_dir (str, optional): The directory where the PDF file will be stored. If not provided, a temporary directory will be used.
+
+    Returns:
+        str: The path to the downloaded PDF file.
+    """
+    # Create an S3 client
+    s3 = boto3.client('s3')
+    
+    # Specify the S3 bucket name and the key of the PDF file
+    bucket_name = "jse-bi-bucket"
+
+    # If a temporary directory is not provided, create a temporary directory
+    if temp_dir is None:
+        temp_dir = tempfile.mkdtemp()
+
+    # Generate a temporary file path
+    temp_file_path = tempfile.mktemp(dir=temp_dir, suffix=".pdf")
+
+    # Download the PDF file from the S3 bucket
+    s3.download_file(bucket_name, pdf_key, temp_file_path)
+
+    return temp_file_path
 
 def upload_file_to_s3(file_name, bucket_name, s3_file_name=None):
     """
