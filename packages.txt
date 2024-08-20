@@ -1,2 +1,1 @@
 cmake
-libarrow-python-dev
