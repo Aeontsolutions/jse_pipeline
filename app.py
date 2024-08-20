@@ -15,6 +15,11 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 def main():
     st.title("Financials Extraction App")
     
+    # st.write(
+    #     "Has environment variables been set:",
+    #     os.environ["AWS_ACCESS_KEY_ID"] == st.secrets["AWS_ACCESS_KEY_ID"],
+    #     )
+    
     # Initialize session state if not already set
     if 'tables_found' not in st.session_state:
         st.session_state['tables_found'] = None

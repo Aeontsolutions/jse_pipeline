@@ -1,9 +1,7 @@
 from os import environ
 import re
-from pdf2image import convert_from_path
 from textractor import Textractor
 from textractor.data.constants import TextractFeatures
-from textractor.utils.s3_utils import upload_to_s3
 
 
 def find_matching_tables(document, desired_patterns):
