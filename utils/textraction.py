@@ -16,7 +16,8 @@ def find_matching_tables(document, desired_patterns):
 def get_table_by_page(matching_tables, page_num):
     for table in matching_tables:
         if table.page == page_num:
-            return table.to_pandas(use_columns=True)
+            return (table.title.text,
+                    table.to_pandas(use_columns=True))
 
     # return None
 
