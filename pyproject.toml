@@ -82,6 +82,9 @@ xarray = "2023.9.0"
 xlsxwriter = "3.0.9"
 zipp = "3.17.0"
 streamlit-pdf-viewer = "^0.0.14"
+langchain-community = "^0.2.12"
+faiss-cpu = "^1.8.0.post1"
+langchain-ollama = "^0.1.1"
 
 
 [build-system]
