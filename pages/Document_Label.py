@@ -3,14 +3,7 @@ import os
 import streamlit as st
 from streamlit_pdf_viewer import pdf_viewer
 from utils.s3_operations import list_s3_files, download_pdf_from_s3
-from langchain import hub
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_ollama import OllamaEmbeddings
-from langchain_ollama.chat_models import ChatOllama
-from langchain_community.vectorstores import FAISS
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
+from utils.llm_label import doc_labeller
 
 from dotenv import load_dotenv
 
@@ -43,41 +36,7 @@ def main():
             logging.debug(f"Downloaded file to: {temp_file_path}")
             pdf_viewer(temp_file_path, pages_to_render=[1, 2,3,4])
             
-            loader = PyPDFLoader(temp_file_path)
-            docs = loader.load()
-            logging.debug(f"Data: {docs[0]}")
-            
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-            splits = text_splitter.split_documents(docs[:5])
-
-            embeddings = OllamaEmbeddings(
-                model="llama3",
-            )
-            
-            vdb = FAISS.from_documents(splits, embeddings)
-            
-            retriever = vdb.as_retriever()
-            prompt = hub.pull("rlm/rag-prompt")
-            logging.debug(f"Prompt: {prompt}")
-
-
-            def format_docs(docs):
-                return "\n\n".join(doc.page_content for doc in docs)
-
-
-            rag_chain = (
-                {
-                    "context": retriever | format_docs, 
-                    "question": RunnablePassthrough()}
-                | prompt
-                | ChatOllama(
-                    model = "llama3",
-                    temperature = 0.8,
-                    num_predict = 256,)
-                | StrOutputParser()
-            )
-
-            st.write(rag_chain.invoke("Is this a quarterly report of an audited financial statement?"))
+            st.write(doc_labeller(temp_file_path))
             
 if __name__ == "__main__":
     
