@@ -1,7 +1,11 @@
+import os
+
 import streamlit as st
 from streamlit_pdf_viewer import pdf_viewer
 from utils.s3_operations import list_s3_files, download_pdf_from_s3
 from utils.textraction import extract_tables_from_document, get_table_by_page
+
+from dotenv import load_dotenv
 
 import logging
 
@@ -31,7 +35,8 @@ def main():
             logging.debug(f"Downloaded file to: {temp_file_path}")
 
             if not st.session_state['tables_found']:
-                st.session_state['tables_found'] = extract_tables_from_document(f"s3://jse-bi-bucket/{selected_file_path}")
+                DESIRED_PATTERNS = (r'comprehensive income', r'financial position', r'cash flow')
+                st.session_state['tables_found'] = extract_tables_from_document(selected_file_path, DESIRED_PATTERNS)
                 logging.debug(f"Tables found: {st.session_state['tables_found']}")
 
             if st.session_state['tables_found']:
@@ -55,3 +60,12 @@ def main():
                         file_name=f'{table_title.lower().replace(" ", "_")}.csv',
                         mime="text/csv",
                     )
+                    
+if __name__ == "__main__":
+    
+    load_dotenv()
+
+    AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+
+    main()

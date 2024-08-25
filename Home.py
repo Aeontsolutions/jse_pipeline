@@ -1,7 +1,6 @@
 import os
 
 import streamlit as st
-from pages import textraction_page
 
 import logging
 
@@ -11,15 +10,14 @@ from dotenv import load_dotenv
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def main():
-    st.title("Financials Extraction App")
+    st.title("Financials Management App")
     
-    # The sidebar
-    page = st.sidebar.selectbox("Choose an option:", ["Extract", "Label"])
-    
-    if page == "Extract":
-        textraction_page.main()
-    elif page == "Label":
-        st.write("Coming soon...")
+    st.write("""
+             This app automatically labels a document and extracts tables from it.
+             Visit the Document Label page to label a document and extract tables from it.
+             Visit the Table Extraction page to extract tables from a document.
+             Happy analysis!
+             """)
 
 if __name__ == "__main__":
     
