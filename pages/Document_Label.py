@@ -15,8 +15,6 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 def main():
     st.title("Label Documents")
     
-    st.warning("Under construction!!!")
-    
     # Initialize session state if not already set
     if 'tables_found' not in st.session_state:
         st.session_state['tables_found'] = None
