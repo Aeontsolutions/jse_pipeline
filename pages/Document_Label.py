@@ -3,7 +3,7 @@ import os
 import streamlit as st
 from streamlit_pdf_viewer import pdf_viewer
 from utils.s3_operations import list_s3_files, download_pdf_from_s3
-from utils.textraction import extract_tables_from_document
+from utils.llm_label import doc_labeller
 
 from dotenv import load_dotenv
 
@@ -14,8 +14,6 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 
 def main():
     st.title("Label Documents")
-    
-    st.warning("Under construction!!!")
     
     # Initialize session state if not already set
     if 'tables_found' not in st.session_state:
@@ -36,14 +34,7 @@ def main():
             logging.debug(f"Downloaded file to: {temp_file_path}")
             pdf_viewer(temp_file_path, pages_to_render=[1, 2,3,4])
             
-            # DESIRED_PATTERNS = (r'table of contents', r'index')
-            # st.session_state['tables_found'] = extract_tables_from_document(selected_file_path, DESIRED_PATTERNS)
-            # logging.debug(f"Tables found: {st.session_state['tables_found']}")
-            
-            # if st.session_state['tables_found']:
-            #     pages = [table.page for table in st.session_state['tables_found']]
-            #     logging.debug(f"Pages to render: {pages}")
-            #     pdf_viewer(temp_file_path, pages_to_render=pages)
+            st.write(doc_labeller(temp_file_path))
             
 if __name__ == "__main__":
     
