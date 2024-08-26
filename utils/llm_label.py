@@ -4,8 +4,9 @@ from google.oauth2 import service_account
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_ollama import OllamaEmbeddings
+# from langchain_ollama import OllamaEmbeddings
 # from langchain_ollama.chat_models import ChatOllama
+from langchain_google_vertexai import VertexAIEmbeddings
 from langchain_google_vertexai import ChatVertexAI
 from langchain_community.vectorstores import FAISS
 from langchain_core.output_parsers import StrOutputParser
@@ -38,9 +39,11 @@ def doc_labeller(file_path):
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     splits = text_splitter.split_documents(docs[:5])
 
-    embeddings = OllamaEmbeddings(
-        model="llama3",
-    )
+    # embeddings = OllamaEmbeddings(
+    #     model="llama3",
+    # )
+    
+    embeddings = VertexAIEmbeddings("text-embedding-004")
     
     vdb = FAISS.from_documents(splits, embeddings)
     
