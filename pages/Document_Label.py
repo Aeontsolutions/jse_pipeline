@@ -1,11 +1,11 @@
-import os
+# import os
 
 import streamlit as st
 from streamlit_pdf_viewer import pdf_viewer
 from utils.s3_operations import list_s3_files, download_pdf_from_s3
 from utils.llm_label import doc_labeller
 
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 
 import logging
 
@@ -38,10 +38,10 @@ def main():
             
 if __name__ == "__main__":
     
-    load_dotenv()
+    # load_dotenv()
 
-    AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-    AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+    AWS_ACCESS_KEY_ID = st.secrets["AWS_ACCESS_KEY_ID"] #os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY = st.secrets["AWS_SECRET_ACCESS_KEY"] #os.getenv("AWS_SECRET_ACCESS_KEY")
 
     main()
             
