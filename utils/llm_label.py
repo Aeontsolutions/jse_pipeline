@@ -21,12 +21,19 @@ logging.basicConfig(
     level=logging.DEBUG, 
     format='%(asctime)s - %(levelname)s - %(message)s')
 
-GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
-logging.debug(f"Google API Key: {GOOGLE_API_KEY}")
+try:
+    GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+    logging.DEBUG("Found Google API Key" if GOOGLE_API_KEY!="" else "No Google API Key found")
+except Exception as e:
+    logging.error(f"Error loading Google API Key: {e}")
 
-credentials = service_account.Credentials.from_service_account_info(
-    st.secrets["vertex_ai_credentials"]
-)
+try:
+    credentials = service_account.Credentials.from_service_account_info(
+            st.secrets["vertex_ai_credentials"]
+            )
+    logging.debug("Credentials loaded successfully.")
+except Exception as e:
+    logging.error(f"Error loading credentials: {e}")
 
 def format_docs(docs):
                 return "\n\n".join(doc.page_content for doc in docs)
@@ -43,7 +50,7 @@ def doc_labeller(file_path):
     #     model="llama3",
     # )
     
-    embeddings = VertexAIEmbeddings("text-embedding-004")
+    embeddings = VertexAIEmbeddings(model_name="text-embedding-004", credentials=credentials)
     
     vdb = FAISS.from_documents(splits, embeddings)
     
