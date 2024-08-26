@@ -163,3 +163,4 @@ cython_debug/
 # App artifcats
 selected_table.csv
 .streamlit/secrets.toml
+credentials.json
