@@ -22,14 +22,14 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s')
 
 try:
-    GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+    GOOGLE_API_KEY = st.secrets.GOOGLE_API_KEY
     logging.DEBUG("Found Google API Key" if GOOGLE_API_KEY!="" else "No Google API Key found")
 except Exception as e:
     logging.error(f"Error loading Google API Key: {e}")
 
 try:
     credentials = service_account.Credentials.from_service_account_info(
-            st.secrets["vertex_ai_credentials"]
+            st.secrets.vertex_ai_credentials
             )
     logging.debug("Credentials loaded successfully.")
     logging.INFO(f"Project ID: {credentials.project_id}")
