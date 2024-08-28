@@ -46,22 +46,22 @@ def doc_labeller(file_path):
     
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     splits = text_splitter.split_documents(docs[:5])
+    logging.debug(f"Splits length: {len(splits)}")
 
     # embeddings = OllamaEmbeddings(
     #     model="llama3",
     # )
     
+    logging.debug("Loading embeddings")
     embeddings = VertexAIEmbeddings(model_name="text-embedding-004", credentials=credentials)
+    logging.debug("Loaded embeddings")
     
     vdb = FAISS.from_documents(splits, embeddings)
-    vdb.save_local("faiss_index")
-    
-    loaded_index = FAISS.load_local("faiss_index", 
-                                    embeddings, allow_dangerous_deserialization=True)
-    
     logging.debug("Loaded index")
     
-    retriever = loaded_index.as_retriever()
+    retriever = vdb.as_retriever()
+    logging.debug("Loaded retriever")
+    
     logging.debug(
         retriever.invoke(
             "Is this an audited financial statement, and which company is it for?",
