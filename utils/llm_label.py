@@ -23,7 +23,7 @@ logging.basicConfig(
 
 try:
     GOOGLE_API_KEY = st.secrets.GOOGLE_API_KEY
-    logging.DEBUG("Found Google API Key" if GOOGLE_API_KEY!="" else "No Google API Key found")
+    logging.debug("Found Google API Key" if GOOGLE_API_KEY!="" else "No Google API Key found")
 except Exception as e:
     logging.error(f"Error loading Google API Key: {e}")
 
@@ -32,7 +32,7 @@ try:
             st.secrets.vertex_ai_credentials
             )
     logging.debug("Credentials loaded successfully.")
-    logging.INFO(f"Project ID: {credentials.project_id}")
+    logging.info(f"Project ID: {credentials.project_id}")
 except Exception as e:
     logging.error(f"Error loading credentials: {e}")
 
