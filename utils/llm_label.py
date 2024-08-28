@@ -54,8 +54,18 @@ def doc_labeller(file_path):
     embeddings = VertexAIEmbeddings(model_name="text-embedding-004", credentials=credentials)
     
     vdb = FAISS.from_documents(splits, embeddings)
+    vdb.save_local("faiss_index")
     
-    retriever = vdb.as_retriever()
+    loaded_index = FAISS.load_local("faiss_index", 
+                                    embeddings, allow_dangerous_deserialization=True)
+    
+    logging.debug("Loaded index")
+    
+    retriever = loaded_index.as_retriever()
+    logging.debug(
+        retriever.invoke(
+            "Is this an audited financial statement, and which company is it for?",
+            k=1))
 
     logging.debug(f"Prompt: {chat_prompt}")
 
