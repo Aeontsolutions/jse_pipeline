@@ -88,6 +88,7 @@ langchain-ollama = "^0.1.1"
 langchain-google-vertexai = "^1.0.10"
 st-files-connection = "^0.1.0"
 gcsfs = "^2024.6.1"
+tqdm = "^4.67.1"
 
 
 [build-system]

@@ -13,6 +13,18 @@ import re
 import csv
 import time
 from datetime import datetime
+import asyncio
+from asyncio import Queue, Semaphore
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import Optional, List, Callable, TypeVar, Any
+from functools import partial
+import aiohttp
+import random
+from tqdm.asyncio import tqdm
+from tqdm import tqdm as tqdm_sync
+
+T = TypeVar('T')  # For generic return type
 
 # Add this before loading environment variables
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
@@ -32,6 +44,42 @@ s3 = boto3.client(
     aws_access_key_id=os.getenv("JSE_ACCESS_KEY_ID"),
     aws_secret_access_key=os.getenv("JSE_SECRET_ACCESS_KEY")
 )
+
+LABEL_PROMPT = """Which ONE of the following documents is this?
+
+    - JSE Weekly Bulletin 
+    - JSE Monthly Regulatory Report
+    - Company Acquistion Notices
+    - APO/IPO Prospectus
+    - Prospectus
+    - Notice of: Appointment Letters/Change in Managers/Disposal/Resignation/Trading in Shares
+    - Notice of Dividend: Consideration/Declaration
+    - Circular Letter to Shareholders
+    - Annual Meeting Documents 2024:
+      * Notice with Pre-registration Guidelines
+      * Management Proxy Circular
+      * Form of Proxy
+    - Notice of and Updates On Mergers
+    - NAV Reports: Daily/Unaudited
+    - Financial Statements:
+      * Annual Audited
+      * Quarterly (Q1-Q4)
+    - Special Circulars:
+      * Directors'
+      * Rights Issue
+      * Take Over Bid
+
+    Provide the document type and company name in the following markdown JSON format, without any JSON formatting characters:
+    ```{
+        "document_type": "<exact match from list above>",
+        "company_name": "<extracted company name>"
+    }```
+
+    If type cannot be determined, return:
+    ```{
+        "document_type": "Unknown",
+        "company_name": "<extracted company name>"
+    }```"""
 
 def list_s3_files():
     """
@@ -124,42 +172,6 @@ def get_candidate_labels(img_binary: bytes):
 
     data_url = f"data:image/png;base64,{img_base64}"
     
-    LABEL_PROMPT = """Which ONE of the following documents is this?
-
-    - JSE Weekly Bulletin 
-    - JSE Monthly Regulatory Report
-    - Company Acquistion Notices
-    - APO/IPO Prospectus
-    - Prospectus
-    - Notice of: Appointment Letters/Change in Managers/Disposal/Resignation/Trading in Shares
-    - Notice of Dividend: Consideration/Declaration
-    - Circular Letter to Shareholders
-    - Annual Meeting Documents 2024:
-      * Notice with Pre-registration Guidelines
-      * Management Proxy Circular
-      * Form of Proxy
-    - Notice of and Updates On Mergers
-    - NAV Reports: Daily/Unaudited
-    - Financial Statements:
-      * Annual Audited
-      * Quarterly (Q1-Q4)
-    - Special Circulars:
-      * Directors'
-      * Rights Issue
-      * Take Over Bid
-
-    Provide the document type and company name in the following markdown JSON format, without any JSON formatting characters:
-    ```{
-        "document_type": "<exact match from list above>",
-        "company_name": "<extracted company name>"
-    }```
-
-    If type cannot be determined, return:
-    ```{
-        "document_type": "Unknown",
-        "company_name": "<extracted company name>"
-    }```"""
-    
     message = HumanMessage(
                 content=[
                     {
@@ -205,42 +217,6 @@ def label_document(candidate_labels: list):
         project=os.getenv("GOOGLE_CLOUD_PROJECT"),
         credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
     )
-    
-    LABEL_PROMPT = """Given this list of potential document types, identify what the document most likely is. ONLY choose from the following list:
-    
-    - JSE Weekly Bulletin 
-    - JSE Monthly Regulatory Report
-    - Company Acquistion Notices
-    - APO/IPO Prospectus
-    - Prospectus
-    - Notice of: Appointment Letters/Change in Managers/Disposal/Resignation/Trading in Shares
-    - Notice of Dividend: Consideration/Declaration
-    - Circular Letter to Shareholders
-    - Annual Meeting Documents 2024:
-      * Notice with Pre-registration Guidelines
-      * Management Proxy Circular
-      * Form of Proxy
-    - Notice of and Updates On Mergers
-    - NAV Reports: Daily/Unaudited
-    - Financial Statements:
-      * Annual Audited
-      * Quarterly (Q1-Q4)
-    - Special Circulars:
-      * Directors'
-      * Rights Issue
-      * Take Over Bid
-
-    Provide the document type and company name in the following markdown JSONformat, without any JSON formatting characters:
-    ```{
-        "document_type": "<exact match from list above>",
-        "company_name": "<extracted company name>"
-    }
-
-    If type cannot be determined, return:
-    ```{
-        "document_type": "Unknown",
-        "company_name": "<extracted company name>"
-    }```"""
     
     # Fix: Convert dictionary objects to strings before joining
     candidate_labels_str = "\n".join([str(label) for label in candidate_labels])
@@ -301,94 +277,380 @@ def generate_new_name(company_name: str, document_type: str):
     
     return f"{clean_company_name} - {new_type}.pdf"
 
-if __name__ == "__main__":
+@dataclass
+class WorkItem:
+    file_path: str
+    status: str = 'pending'
+    result: Optional[dict] = None
+    error: Optional[str] = None
+
+class RateLimiter:
+    def __init__(self, calls_per_second: float = 2.0):
+        self.calls_per_second = calls_per_second
+        self.min_interval = 1.0 / calls_per_second
+        self.last_call = datetime.min
+        self.semaphore = Semaphore(3)  # Max concurrent API calls
+    
+    async def acquire(self):
+        await self.semaphore.acquire()
+        now = datetime.now()
+        
+        # Calculate time since last call
+        elapsed = (now - self.last_call).total_seconds()
+        if elapsed < self.min_interval:
+            # Wait if we're calling too frequently
+            await asyncio.sleep(self.min_interval - elapsed)
+        
+        self.last_call = datetime.now()
+    
+    def release(self):
+        self.semaphore.release()
+
+class RetryWithExponentialBackoff:
+    def __init__(
+        self,
+        initial_delay: float = 1.0,
+        max_delay: float = 60.0,
+        max_retries: int = 3,
+        backoff_factor: float = 2.0,
+        jitter: bool = True
+    ):
+        self.initial_delay = initial_delay
+        self.max_delay = max_delay
+        self.max_retries = max_retries
+        self.backoff_factor = backoff_factor
+        self.jitter = jitter
+
+    async def execute(self, func: Callable[..., T], *args, **kwargs) -> T:
+        delay = self.initial_delay
+        last_exception = None
+
+        for retry in range(self.max_retries):
+            try:
+                return await func(*args, **kwargs)
+            
+            except Exception as e:
+                last_exception = e
+                logger.warning(f"Attempt {retry + 1} failed: {str(e)}")
+
+                if retry == self.max_retries - 1:
+                    logger.error(f"Max retries ({self.max_retries}) reached")
+                    raise last_exception
+
+                # Calculate delay with optional jitter
+                if self.jitter:
+                    delay *= (1 + random.random())
+                
+                # Apply backoff factor and cap at max_delay
+                delay = min(delay * self.backoff_factor, self.max_delay)
+                
+                logger.info(f"Retrying in {delay:.2f} seconds...")
+                await asyncio.sleep(delay)
+
+        raise last_exception
+
+class DocumentProcessor:
+    def __init__(
+        self, 
+        num_workers: int = 5, 
+        batch_size: int = 10, 
+        calls_per_second: float = 2.0,
+        initial_retry_delay: float = 1.0,
+        max_retry_delay: float = 60.0,
+        max_retries: int = 3
+    ):
+        self.num_workers = num_workers
+        self.batch_size = batch_size
+        self.work_queue = Queue()
+        self.result_queue = Queue()
+        self.workers: List[asyncio.Task] = []
+        self.executor = ThreadPoolExecutor(max_workers=4)
+        self.results = []
+        self.rate_limiter = RateLimiter(calls_per_second)
+        self.retry_handler = RetryWithExponentialBackoff(
+            initial_delay=initial_retry_delay,
+            max_delay=max_retry_delay,
+            max_retries=max_retries
+        )
+        self.total_files = 0
+        self.progress_bar = None
+        self.batch_progress = None
+
+    async def call_api_with_retry(self, img_binary: bytes):
+        """Make API call with retry logic"""
+        async def api_call():
+            img_base64 = base64.b64encode(img_binary).decode('utf-8')
+            
+            model = ChatVertexAI(
+                model="gemini-1.5-flash-001",
+                project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+                credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            )
+
+            data_url = f"data:image/png;base64,{img_base64}"
+            message = HumanMessage(content=[
+                {"type": "text", "text": LABEL_PROMPT},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ])
+            
+            chain = model | JsonOutputParser()
+            return await chain.ainvoke([message])
+
+        return await self.retry_handler.execute(api_call)
+
+    async def get_candidate_labels_with_rate_limit(self, img_binary: bytes):
+        """Rate-limited version of get_candidate_labels with retry logic"""
+        try:
+            await self.rate_limiter.acquire()
+            return await self.call_api_with_retry(img_binary)
+        finally:
+            self.rate_limiter.release()
+
+    async def worker(self, worker_id: int):
+        """Worker process that handles file processing"""
+        logger.info(f"Worker {worker_id} started")
+        
+        while True:
+            try:
+                work_item: WorkItem = await self.work_queue.get()
+                
+                try:
+                    logger.info(f"Worker {worker_id} processing {work_item.file_path}")
+                    
+                    # Process PDF in thread pool with retry and progress
+                    try:
+                        img_binaries = await self.retry_handler.execute(
+                            asyncio.get_event_loop().run_in_executor,
+                            self.executor,
+                            extract_pages,
+                            work_item.file_path
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to process PDF after retries: {str(e)}")
+                        raise
+
+                    # Process images with rate limiting and retry logic
+                    tasks = []
+                    for img in img_binaries:
+                        task = self.get_candidate_labels_with_rate_limit(img)
+                        tasks.append(task)
+                    
+                    try:
+                        candidate_labels = await asyncio.gather(*tasks)
+                    except Exception as e:
+                        logger.error(f"Failed to process images after retries: {str(e)}")
+                        raise
+
+                    # Get final label and generate new name
+                    final_label = candidate_labels[-1]
+                    new_name = generate_new_name(
+                        str(final_label.get('company_name', '')),
+                        str(final_label.get('document_type', ''))
+                    )
+
+                    # Store result
+                    work_item.status = 'completed'
+                    work_item.result = {
+                        'original_name': work_item.file_path,
+                        'new_name': new_name
+                    }
+
+                except Exception as e:
+                    work_item.status = 'failed'
+                    work_item.error = str(e)
+                    logger.error(f"Worker {worker_id} error processing {work_item.file_path}: {e}")
+
+                finally:
+                    if self.batch_progress:
+                        self.batch_progress.update(1)
+                    await self.result_queue.put(work_item)
+                    self.work_queue.task_done()
+
+            except asyncio.CancelledError:
+                logger.info(f"Worker {worker_id} shutting down")
+                break
+
+    async def result_collector(self):
+        """Collects and processes results from workers"""
+        while True:
+            try:
+                result = await self.result_queue.get()
+                if result.status == 'completed' and result.result:
+                    self.results.append(result.result)
+                    if self.progress_bar:
+                        self.progress_bar.update(1)
+                self.result_queue.task_done()
+                
+                # Periodically save results
+                if len(self.results) % 10 == 0:
+                    await self.save_partial_results()
+                    
+            except asyncio.CancelledError:
+                break
+
+    async def save_partial_results(self):
+        """Save current results to CSV"""
+        if not self.results:
+            return
+            
+        try:
+            with open('filename_mapping.csv', 'w', newline='') as csvfile:
+                fieldnames = ['original_name', 'new_name']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(self.results)
+        except Exception as e:
+            logger.error(f"Error saving results: {e}")
+
+    async def process_files(self, files: List[str]):
+        """Main processing method"""
+        self.total_files = len(files)
+        
+        try:
+            # Initialize progress bar for overall progress
+            with tqdm_sync(
+                total=self.total_files,
+                desc="Overall Progress",
+                unit="files",
+                position=0,
+                leave=True
+            ) as self.progress_bar:
+                
+                # Start workers
+                self.workers = [
+                    asyncio.create_task(self.worker(i))
+                    for i in range(self.num_workers)
+                ]
+                
+                # Start result collector
+                collector = asyncio.create_task(self.result_collector())
+
+                # Process files in batches with progress bar
+                for i in range(0, len(files), self.batch_size):
+                    batch = files[i:i + self.batch_size]
+                    batch_desc = f"Batch {i//self.batch_size + 1}/{(len(files) + self.batch_size - 1)//self.batch_size}"
+                    
+                    # Initialize progress bar for current batch
+                    with tqdm_sync(
+                        total=len(batch),
+                        desc=batch_desc,
+                        unit="files",
+                        position=1,
+                        leave=False
+                    ) as self.batch_progress:
+                        # Add files to work queue
+                        for file in batch:
+                            await self.work_queue.put(WorkItem(file_path=file))
+                            
+                        # Wait for batch to complete
+                        await self.work_queue.join()
+                        self.batch_progress.update(len(batch))
+
+                # Wait for all results to be processed
+                await self.result_queue.join()
+
+                # Cancel workers and collector
+                for worker in self.workers:
+                    worker.cancel()
+                collector.cancel()
+
+                # Wait for workers to shut down
+                await asyncio.gather(*self.workers, collector, return_exceptions=True)
+
+                # Save final results
+                await self.save_partial_results()
+            
+        finally:
+            self.executor.shutdown()
+
+async def process_single_file(file: str, executor: ThreadPoolExecutor):
+    """
+    Process a single file asynchronously
+    """
     try:
+        # Run CPU-intensive PDF operations in thread pool
+        img_binaries = await asyncio.get_event_loop().run_in_executor(
+            executor, 
+            extract_pages, 
+            file
+        )
+        
+        # Process images concurrently
+        tasks = [
+            get_candidate_labels_async(img)
+            for img in img_binaries
+        ]
+        candidate_labels = await asyncio.gather(*tasks)
+        
+        # Get final label and generate new name
+        final_label = candidate_labels[-1]
+        new_name = generate_new_name(
+            str(final_label.get('company_name', '')),
+            str(final_label.get('document_type', ''))
+        )
+        
+        return {
+            'original_name': file,
+            'new_name': new_name
+        }
+    except Exception as e:
+        logger.error(f"Error processing file {file}: {str(e)}")
+        return None
+
+async def get_candidate_labels_async(img_binary: bytes):
+    """
+    Async version of get_candidate_labels
+    """
+    img_base64 = base64.b64encode(img_binary).decode('utf-8')
+    
+    model = ChatVertexAI(
+        model="gemini-1.5-flash-001",
+        project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+        credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    )
+
+    data_url = f"data:image/png;base64,{img_base64}"
+    
+    message = HumanMessage(content=[
+        {"type": "text", "text": LABEL_PROMPT},
+        {"type": "image_url", "image_url": {"url": data_url}},
+    ])
+    
+    chain = model | JsonOutputParser()
+    response = await chain.ainvoke([message])
+    return response
+
+async def main():
+    try:
+        # Get list of files
+        print("Fetching files from S3...")
         files = list_s3_files()
-        results = []
         total_files = len(files)
         
-        logger.info(f"Starting processing of {total_files} files")
+        print(f"\nStarting processing of {total_files} files")
+        print("Progress bars will show overall progress and current batch progress\n")
+
+        # Create processor with desired settings
+        processor = DocumentProcessor(
+            num_workers=5,
+            batch_size=10,
+            calls_per_second=2.0,
+            initial_retry_delay=1.0,
+            max_retry_delay=60.0,
+            max_retries=3
+        )
+        
+        # Process files with progress tracking
         start_time = time.time()
+        await processor.process_files(files)
         
-        for index, file in enumerate(files, 1):
-            current_time = time.time()
-            elapsed_time = current_time - start_time
-            
-            logger.info(f"Processing file {index}/{total_files} ({(index/total_files)*100:.1f}%) - Elapsed time: {elapsed_time:.1f}s")
-            logger.info(f"Current file: {file}")
-            
-            try:
-                # Add timeout to extract_pages
-                start_process = time.time()
-                img_binaries = extract_pages(file)
-                if time.time() - start_process > 300:  # 5 minute timeout
-                    logger.warning(f"Processing timeout for file {file}")
-                    continue
-                    
-                candidate_labels = []
-                
-                for img in img_binaries:
-                    label = get_candidate_labels(img)
-                    candidate_labels.append(label)
-                
-                # if there is more than one candidate label, final label is the last one
-                final_label = candidate_labels[-1]
-                
-                # final_label = label_document(candidate_labels)
-                # logger.info(f"Final label before generating name: {final_label}")
-                
-                # # Rest of validation
-                # if not isinstance(final_label, dict):
-                #     logger.error(f"Unexpected final_label type: {type(final_label)}")
-                #     continue
-                    
-                # if 'company_name' not in final_label or 'document_type' not in final_label:
-                #     logger.error(f"Missing required fields in final_label: {final_label}")
-                #     continue
-                
-                new_name = generate_new_name(
-                    str(final_label.get('company_name', '')),
-                    str(final_label.get('document_type', ''))
-                )
-                
-                # Store the filename pair
-                results.append({
-                    'original_name': file,
-                    'new_name': new_name
-                })
-                
-                logger.info(f"Original file: {file}")
-                logger.info(f"New name: {new_name}")
-                
-            except Exception as e:
-                logger.error(f"Error processing file {file}: {str(e)}")
-                continue
-            
-            # Add periodic status updates
-            if index % 5 == 0:  # Log status every 5 files
-                logger.info(f"Status update - Processed {index}/{total_files} files")
-                logger.info(f"Last successful file: {file}")
-        
-        # Export results to CSV
-        csv_path = 'filename_mapping.csv'
-        try:
-            with open(csv_path, 'w', newline='') as csvfile:
-                fieldnames = ['original_name', 'new_name']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                
-                writer.writeheader()
-                writer.writerows(results)
-                
-            logger.info(f"Successfully exported filename mapping to {csv_path}")
-        except Exception as e:
-            logger.error(f"Error writing CSV file: {str(e)}")
+        elapsed_time = time.time() - start_time
+        print(f"\nProcessing completed in {elapsed_time:.2f} seconds")
+        print(f"Successfully processed {len(processor.results)} files")
+
     except KeyboardInterrupt:
-        logger.info("Process interrupted by user")
-        # Save partial results to CSV
-        if results:
-            with open('partial_results.csv', 'w', newline='') as csvfile:
-                fieldnames = ['original_name', 'new_name']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(results)
-            logger.info("Partial results saved to partial_results.csv")
+        print("\nProcess interrupted by user")
+        # Results will be saved by the processor
+
+if __name__ == "__main__":
+    asyncio.run(main())
