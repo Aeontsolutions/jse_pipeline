@@ -23,6 +23,7 @@ import aiohttp
 import random
 from tqdm.asyncio import tqdm
 from tqdm import tqdm as tqdm_sync
+import urllib3
 
 T = TypeVar('T')  # For generic return type
 
@@ -39,10 +40,32 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
+# Configure connection pooling
+config = boto3.Config(
+    max_pool_connections=50,  # Increase from default 10
+    retries={'max_attempts': 3}
+)
+
 s3 = boto3.client(
     's3',
     aws_access_key_id=os.getenv("JSE_ACCESS_KEY_ID"),
-    aws_secret_access_key=os.getenv("JSE_SECRET_ACCESS_KEY")
+    aws_secret_access_key=os.getenv("JSE_SECRET_ACCESS_KEY"),
+    config=config
+)
+
+source_s3 = boto3.client(
+    's3',
+    aws_access_key_id=os.getenv("JSE_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("JSE_SECRET_ACCESS_KEY"),
+    config=config
+)
+
+target_s3 = boto3.client(
+    's3',
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    region_name=os.getenv("AWS_DEFAULT_REGION"),
+    config=config
 )
 
 LABEL_PROMPT = """Which ONE of the following documents is this?
@@ -233,6 +256,10 @@ def label_document(candidate_labels: list):
     return chain.invoke([message])
 
 def generate_new_name(company_name: str, document_type: str):
+    """
+    Generate new name and partition path for the document
+    Returns tuple of (partition_path, new_filename)
+    """
     # Fix: Add input validation
     if not company_name or not document_type:
         raise ValueError("Company name and document type cannot be empty")
@@ -275,7 +302,11 @@ def generate_new_name(company_name: str, document_type: str):
         # Convert document type to snake case
         new_type = re.sub(r'[^a-z0-9]+', '_', doc_type_lower).strip('_')
     
-    return f"{clean_company_name} - {new_type}.pdf"
+    # Generate the partition path and filename
+    partition_path = f"{clean_company_name}/{new_type}"
+    new_filename = f"{clean_company_name}_{new_type}.pdf"
+    
+    return partition_path, new_filename
 
 @dataclass
 class WorkItem:
@@ -406,6 +437,59 @@ class DocumentProcessor:
         finally:
             self.rate_limiter.release()
 
+    async def upload_to_new_bucket(self, original_key: str, company_name: str, document_type: str) -> bool:
+        """
+        Upload renamed document to new bucket using different credentials with partitioning
+        Args:
+            original_key: Original S3 key
+            company_name: Clean company name for partitioning
+            document_type: Document type for partitioning
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        source_bucket = os.getenv("S3_BUCKET_NAME")
+        target_bucket = os.getenv("S3_TARGET_BUCKET")  # This should be just the bucket name, not s3:// prefix
+        
+        try:
+            # Generate partition path and filename
+            partition_path, new_filename = generate_new_name(company_name, document_type)
+            full_key = f"{partition_path}/{new_filename}"
+            
+            # Create temporary file path
+            temp_path = f'/tmp/{new_filename}'
+            
+            # Download from source bucket
+            await asyncio.get_event_loop().run_in_executor(
+                self.executor,
+                lambda: source_s3.download_file(
+                    source_bucket,
+                    original_key,
+                    temp_path
+                )
+            )
+            
+            # Upload to target bucket with partition path
+            await asyncio.get_event_loop().run_in_executor(
+                self.executor,
+                lambda: target_s3.upload_file(
+                    temp_path,
+                    target_bucket,
+                    full_key
+                )
+            )
+            
+            logger.info(f"Successfully copied {original_key} to {target_bucket}/{full_key}")
+            return True, full_key
+            
+        except Exception as e:
+            logger.error(f"Failed to copy {original_key} to new bucket: {str(e)}")
+            return False, None
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
     async def worker(self, worker_id: int):
         """Worker process that handles file processing"""
         logger.info(f"Worker {worker_id} started")
@@ -441,18 +525,24 @@ class DocumentProcessor:
                         logger.error(f"Failed to process images after retries: {str(e)}")
                         raise
 
-                    # Get final label and generate new name
+                    # Get final label
                     final_label = candidate_labels[-1]
-                    new_name = generate_new_name(
-                        str(final_label.get('company_name', '')),
-                        str(final_label.get('document_type', ''))
+                    company_name = str(final_label.get('company_name', ''))
+                    document_type = str(final_label.get('document_type', ''))
+
+                    # Upload to new bucket with partitioning
+                    upload_success, full_key = await self.upload_to_new_bucket(
+                        work_item.file_path,
+                        company_name,
+                        document_type
                     )
 
-                    # Store result
-                    work_item.status = 'completed'
+                    # Store result with upload status and full path
+                    work_item.status = 'completed' if upload_success else 'upload_failed'
                     work_item.result = {
                         'original_name': work_item.file_path,
-                        'new_name': new_name
+                        'new_path': full_key,
+                        'upload_status': 'success' if upload_success else 'failed'
                     }
 
                 except Exception as e:
@@ -495,7 +585,7 @@ class DocumentProcessor:
             
         try:
             with open('filename_mapping.csv', 'w', newline='') as csvfile:
-                fieldnames = ['original_name', 'new_name']
+                fieldnames = ['original_name', 'new_path', 'upload_status']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerows(self.results)
