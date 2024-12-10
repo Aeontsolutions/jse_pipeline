@@ -77,10 +77,16 @@ LABEL_PROMPT = """Which ONE of the following documents is this?
     - JSE Weekly Bulletin 
     - JSE Monthly Regulatory Report
     - Company Acquistion Notices
-    - APO/IPO Prospectus
+    - APO Prospectus
+    - IPO Prospectus
     - Prospectus
-    - Notice of: Appointment Letters/Change in Managers/Disposal/Resignation/Trading in Shares
-    - Notice of Dividend: Consideration/Declaration
+    - Notice of Appointment Letters
+    - Notice of Change in Managers
+    - Notice of Disposal
+    - Notice of Resignation
+    - Notice of Trading in Shares
+    - Notice of Dividend Consideration
+    - Notice of Dividend Declaration
     - Circular Letter to Shareholders
     - Annual Meeting Documents 2024:
       * Notice with Pre-registration Guidelines
@@ -88,13 +94,14 @@ LABEL_PROMPT = """Which ONE of the following documents is this?
       * Form of Proxy
     - Notice of and Updates On Mergers
     - NAV Reports: Daily/Unaudited
-    - Financial Statements:
-      * Annual Audited
-      * Quarterly (Q1-Q4)
-    - Special Circulars:
-      * Directors'
-      * Rights Issue
-      * Take Over Bid
+    - Annual Audited Financial Statements
+    - First Quarter Financial Statements
+    - Second Quarter Financial Statements
+    - Third Quarter Financial Statements
+    - Fourth Quarter Financial Statements
+    - Directors' Circulars
+    - Rights Issue Circular
+    - Take Over Bid Circular
 
     Provide the document type and company name in the following markdown JSON format, without any JSON formatting characters:
     ```{
@@ -487,15 +494,17 @@ class DocumentProcessor:
             bool: True if successful, False otherwise
         """
         source_bucket = os.getenv("S3_BUCKET_NAME")
-        target_bucket = os.getenv("S3_TARGET_BUCKET")  # This should be just the bucket name, not s3:// prefix
+        target_bucket = os.getenv("S3_TARGET_BUCKET")
         
         try:
             # Generate partition path and filename
             partition_path, new_filename = generate_new_name(company_name, symbol, document_type)
-            full_key = f"{partition_path}/{new_filename}"
             
-            # Create temporary file path
-            temp_path = f'/tmp/{new_filename}'
+            # Create a safe temporary filename using the original file's name
+            temp_filename = os.path.basename(original_key)  # Get just the filename
+            temp_path = os.path.join('/tmp', temp_filename)  # Create full temp path
+            
+            logger.info(f"Downloading {original_key} to {temp_path}")
             
             # Download from source bucket
             await asyncio.get_event_loop().run_in_executor(
@@ -507,7 +516,12 @@ class DocumentProcessor:
                 )
             )
             
-            # Upload to target bucket with partition path
+            # Generate the full target key
+            full_key = f"{partition_path}/{new_filename}"
+            
+            logger.info(f"Uploading from {temp_path} to {target_bucket}/{full_key}")
+            
+            # Upload to target bucket
             await asyncio.get_event_loop().run_in_executor(
                 self.executor,
                 lambda: target_s3.upload_file(
