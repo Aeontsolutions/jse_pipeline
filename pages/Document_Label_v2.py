@@ -24,6 +24,10 @@ import random
 from tqdm.asyncio import tqdm
 from tqdm import tqdm as tqdm_sync
 import urllib3
+from langchain_community.vectorstores import FAISS
+from langchain_community.document_loaders import CSVLoader
+from langchain_google_vertexai import VertexAIEmbeddings
+from botocore.config import Config
 
 T = TypeVar('T')  # For generic return type
 
@@ -41,7 +45,7 @@ logging.basicConfig(
 )
 
 # Configure connection pooling
-config = boto3.Config(
+config = Config(
     max_pool_connections=50,  # Increase from default 10
     retries={'max_attempts': 3}
 )
@@ -255,56 +259,23 @@ def label_document(candidate_labels: list):
     
     return chain.invoke([message])
 
-def generate_new_name(company_name: str, document_type: str):
+def generate_new_name(company_name: str, symbol: str, document_type: str):
     """
     Generate new name and partition path for the document
     Returns tuple of (partition_path, new_filename)
     """
     # Fix: Add input validation
-    if not company_name or not document_type:
-        raise ValueError("Company name and document type cannot be empty")
+    if not company_name or not symbol or not document_type:
+        raise ValueError("Company name, symbol, and document type cannot be empty")
     
     # Clean company name - remove special characters and convert to snake case
     clean_company_name = re.sub(r'[^a-zA-Z0-9]+', '_', company_name).strip('_').lower()
-    
-    # Convert input to lowercase for case-insensitive matching
-    doc_type_lower = document_type.lower()
-    
-    # Pattern matching dictionary with regex patterns
-    pattern_matches = {
-        r'.*bulletin.*': 'weekly_bulletin',
-        r'.*regulatory.*report.*': 'monthly_regulatory_report',
-        r'.*shareholder.*(?:circular|letter).*|.*(?:circular|letter).*shareholder.*': 'circular_letter_to_shareholders',
-        r'.*prospectus.*': 'prospectus',
-        r'.*(?:appointment|change|disposal|resignation|trading).*': 'notice_of_change',
-        r'.*dividend.*(?:consideration|declaration).*': 'notice_of_dividend',
-        r'.*(?:annual|quarterly).*(?:financial|statement).*': 'financial_statements',
-        r'.*special.*circular.*': 'special_circular',
-        r'.*merger.*': 'merger_notices',
-        r'.*nav.*': 'nav_reports',
-        r'.*annual.*meeting.*': 'annual_meeting_documents',
-        r'.*ipo.*': 'ipo_prospectus',
-        r'.*apo.*': 'apo_prospectus',
-        r'.*rights.*issue.*': 'rights_issue',
-        r'.*take.*over.*bid.*': 'take_over_bid',
-        r'.*notice.*': 'notice',
-    }
-    
-    # Find matching pattern
-    new_type = None
-    for pattern, value in pattern_matches.items():
-        if re.match(pattern, doc_type_lower):
-            new_type = value
-            break
-    
-    # If no match found, create a fallback format
-    if new_type is None:
-        # Convert document type to snake case
-        new_type = re.sub(r'[^a-z0-9]+', '_', doc_type_lower).strip('_')
+    symbol = symbol.lower()
+    document_type = document_type.lower()
     
     # Generate the partition path and filename
-    partition_path = f"{clean_company_name}/{new_type}"
-    new_filename = f"{clean_company_name}_{new_type}.pdf"
+    partition_path = f"{clean_company_name}/{document_type}"
+    new_filename = f"{clean_company_name}_{symbol}_{document_type}.pdf"
     
     return partition_path, new_filename
 
@@ -406,6 +377,55 @@ class DocumentProcessor:
         self.total_files = 0
         self.progress_bar = None
         self.batch_progress = None
+        self.company_db = None  # Will store the FAISS database
+        self.doc_type_db = None  # Will store the FAISS database
+        
+    async def initialize_company_search(self):
+        """Initialize the FAISS database for company search"""
+        loader = CSVLoader(file_path="listed_companies - Sheet1.csv")
+        docs = loader.load()
+        embeddings = VertexAIEmbeddings(
+            model_name="text-embedding-004"
+        )
+        self.company_db = FAISS.from_documents(docs, embeddings)
+    
+    async def initialize_doc_type_search(self):
+        """Initialize the FAISS database for document type search"""
+        loader = CSVLoader(file_path="Naming_Convention_Documents - Copy of Copy of Tagged Documents.csv")
+        docs = loader.load()
+        embeddings = VertexAIEmbeddings(
+            model_name="text-embedding-004"
+        )
+        self.doc_type_db = FAISS.from_documents(docs, embeddings)
+
+    async def search_company(self, query_text: str):
+        """Search for company name and symbol"""
+        if self.company_db is None:
+            await self.initialize_company_search()
+            
+        # Perform similarity search
+        docs = await self.company_db.asimilarity_search(query_text, k=1)
+
+        # Extract company and symbol from the result
+        content = docs[0].page_content
+        company = content.split('\n')[0].replace('Company: ', '').strip()
+        symbol = content.split('\n')[1].replace('Symbol: ', '').strip()
+        
+        return company, symbol
+    
+    async def search_doc_type(self, query_text: str):
+        """Search for document type"""
+        if self.doc_type_db is None:
+            await self.initialize_doc_type_search()
+            
+        # Perform similarity search
+        docs = await self.doc_type_db.asimilarity_search(query_text, k=1)
+
+        # Extract document type from the result
+        content = docs[0].page_content
+        doc_type = content.split('\n')[1].replace('Document Type: ', '').strip()
+        
+        return doc_type
 
     async def call_api_with_retry(self, img_binary: bytes):
         """Make API call with retry logic"""
@@ -425,7 +445,25 @@ class DocumentProcessor:
             ])
             
             chain = model | JsonOutputParser()
-            return await chain.ainvoke([message])
+            initial_result = await chain.ainvoke([message])
+
+            # Get the initial company name from the API response
+            initial_company = initial_result.get('company_name', '')
+            
+            # Search for the correct company name
+            try:
+                company_name, symbol = await self.search_company(initial_company)
+                doc_type = await self.search_doc_type(initial_company)
+                # Update the result with the corrected company name
+                initial_result['company_name'] = company_name
+                initial_result['symbol'] = symbol
+                initial_result['document_type'] = doc_type
+            except Exception as e:
+                logger.warning(f"Company name search failed: {str(e)}. Using original name.")
+                initial_result['symbol'] = "unknown"
+                initial_result['document_type'] = "unknown"
+
+            return initial_result
 
         return await self.retry_handler.execute(api_call)
 
@@ -437,12 +475,13 @@ class DocumentProcessor:
         finally:
             self.rate_limiter.release()
 
-    async def upload_to_new_bucket(self, original_key: str, company_name: str, document_type: str) -> bool:
+    async def upload_to_new_bucket(self, original_key: str, company_name: str, symbol: str, document_type: str) -> bool:
         """
         Upload renamed document to new bucket using different credentials with partitioning
         Args:
             original_key: Original S3 key
             company_name: Clean company name for partitioning
+            symbol: Symbol for partitioning
             document_type: Document type for partitioning
         Returns:
             bool: True if successful, False otherwise
@@ -452,7 +491,7 @@ class DocumentProcessor:
         
         try:
             # Generate partition path and filename
-            partition_path, new_filename = generate_new_name(company_name, document_type)
+            partition_path, new_filename = generate_new_name(company_name, symbol, document_type)
             full_key = f"{partition_path}/{new_filename}"
             
             # Create temporary file path
@@ -528,12 +567,14 @@ class DocumentProcessor:
                     # Get final label
                     final_label = candidate_labels[-1]
                     company_name = str(final_label.get('company_name', ''))
+                    symbol = str(final_label.get('symbol', ''))
                     document_type = str(final_label.get('document_type', ''))
 
                     # Upload to new bucket with partitioning
                     upload_success, full_key = await self.upload_to_new_bucket(
                         work_item.file_path,
                         company_name,
+                        symbol,
                         document_type
                     )
 
@@ -597,6 +638,10 @@ class DocumentProcessor:
         self.total_files = len(files)
         
         try:
+            # Initialize company search database
+            await self.initialize_company_search()
+            await self.initialize_doc_type_search()
+            
             # Initialize progress bar for overall progress
             with tqdm_sync(
                 total=self.total_files,
@@ -715,6 +760,9 @@ async def main():
         # Get list of files
         print("Fetching files from S3...")
         files = list_s3_files()
+        # total_files = len(files)
+        # Select first 100 files
+        files = files[:100]
         total_files = len(files)
         
         print(f"\nStarting processing of {total_files} files")
@@ -722,7 +770,7 @@ async def main():
 
         # Create processor with desired settings
         processor = DocumentProcessor(
-            num_workers=5,
+            num_workers=10,
             batch_size=10,
             calls_per_second=2.0,
             initial_retry_delay=1.0,
