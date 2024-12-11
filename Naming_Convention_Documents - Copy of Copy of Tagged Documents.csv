@@ -1,39 +1,25 @@
 Expected Input,Document Type
-JSE Weekly Bulletin ,Bulletins
-JSE Monthly Regulatory Report,RMOD Updates
-Company Acquistion Notices,Acquisitions
-APO Prospectus,APO
-IPO Prospectus,IPO
+JSE Weekly Bulletin,Bulletins
+JSE Monthly Regulatory Report,JSE Monthly Regulatory Report
+Acquistion,Acquisitions
+APO,APO
+IPO,IPO
 Prospectus,Prospectus
-Notice of Appointment Letters,Appointments
-Notice of Change in Managers,Change in Management
-Notice of Disposal,Disposals
-Notice of Dividend Consideratio n,Dividend Considerations
-Notice of Dividend Declaration,Dividend Payments
-"Circular Letter to Shareholders
-",General Meetings
-"Notice of Annual Meeting including Notes and Guidelines for Pre-registration 2024
-
-",General Meetings
-"Management Proxy Circular 2024
-
-",General Meetings
-"Form of Proxy 2024
-
-",General Meetings
+Appointment,Appointments
+Change in Management,Change in Management
+Disposal,Disposals
+Dividend Consideration,Dividend Considerations
+Dividend Payment,Dividend Payments
+Circular Letter to Shareholders/Notice of Annual Meeting including Notes and Guidelines for Pre-registration 2024/Management Proxy Circular 2024/Form of Proxy 2024,General Meetings
 Notice of and Updates On Mergers,Mergers
-Daily NAV,NAV
-Unaudited NAV,NAV
-Notice of Resignation,Resignations and Retirements
-Notice of Trading in Shares,Trading in Shares
+Daily NAV/Unaudited NAV,NAV
+Resignations and Retirements,Resignations and Retirements
+Trading in Shares,Trading in Shares
 Annual Audited Financial Statements,Annual Report
-First Quarter Financial Statements,Quarterly_Report_Q1
-Second Quarter Financial Statements,Quarterly_Report_Q2
-Third Quarter Financial Statements,Quarterly_Report_Q3
-Fourth Quarter Financial Statements,Quarterly_Report_Q4
-Directors' Circular,Directors Circular
+Unaudited Quarterly Report Q1,Quarterly_Report_Q1
+Unaudited Quarterly Report Q2,Quarterly_Report_Q2
+Unaudited Quarterly Report Q3,Quarterly_Report_Q3
+Unaudited Quarterly Report Q4,Quarterly_Report_Q4
+Directors Circular,Directors Circular
 Rights Issue Circular,Rights Issue Circular
 Take Over Bid Circular,Take Over Bid Circular
-N/A,Podcasts
-N/A,JSE Updates
-N/A,Other Company News

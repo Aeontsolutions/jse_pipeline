@@ -10,7 +10,7 @@ import logging
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def update_google_sheet(url, proposed_name, decision):
+def update_google_sheet(url, proposed_name):
     creds = Credentials(
         None,
         refresh_token=st.secrets["google_credentials"]["refresh_token"],
@@ -21,9 +21,9 @@ def update_google_sheet(url, proposed_name, decision):
     service = build('sheets', 'v4', credentials=creds)
     
     # Append to Google Sheet
-    sheet_id = st.secrets["GOOGLE_SHEETS_ID"]
-    range_name = 'Sheet1!A:C'  # Adjust based on your sheet
-    values = [[url, proposed_name, decision]]
+    sheet_id = st.secrets["google_sheet_id"]
+    range_name = 'Sheet2!A:B'  # Just URL and name
+    values = [[url, proposed_name]]
     body = {'values': values}
     
     service.spreadsheets().values().append(
@@ -55,7 +55,7 @@ def get_reviewed_urls():
         
         # Get all reviewed URLs from Google Sheet
         sheet_id = st.secrets["GOOGLE_SHEETS_ID"]
-        range_name = 'Sheet1!A:A'  # First column contains URLs
+        range_name = 'Sheet2!A:A'  # First column contains URLs
         result = service.spreadsheets().values().get(
             spreadsheetId=sheet_id,
             range=range_name
@@ -91,32 +91,33 @@ def main():
             current_row = df.iloc[st.session_state['current_index']]
             
             # Display PDF
-            pdf_url = current_row['old_guid']  # Update column name as needed
-            proposed_name = current_row['new_guid']  # Update column name as needed
+            pdf_url = current_row['old_guid']
+            initial_proposed_name = current_row['new_post_name']
             
             temp_file_path = download_pdf_from_url(pdf_url)
             if temp_file_path:
+                st.write("### Proposed new name:")
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    # Add text input for editing the proposed name
+                    proposed_name = st.text_input("Edit name if needed:", 
+                                            value=initial_proposed_name,
+                                            key=f"name_input_{st.session_state['current_index']}")
+                    
+                with col2:
+                    if st.button("Approve", use_container_width=True):
+                        update_google_sheet(pdf_url, proposed_name)
+                        st.session_state['current_index'] += 1
+                        st.rerun()
                 
-                left, right = st.columns(2)
-                with left:
-                    pdf_viewer(temp_file_path, pages_to_render=[1, 2, 3, 4])
-                with right:
-                    st.write(f"Proposed new name: {proposed_name}")
-                
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("Accept"):
-                            update_google_sheet(pdf_url, proposed_name, "Accepted")
-                            st.session_state['current_index'] += 1
-                            st.rerun()
-                
-                    with col2:
-                        if st.button("Reject"):
-                            update_google_sheet(pdf_url, proposed_name, "Rejected")
-                            st.session_state['current_index'] += 1
-                            st.rerun()
+                st.write("")
+
             else:
                 st.error("Failed to download PDF")
+            
+            # Display PDF viewer
+            pdf_viewer(temp_file_path, pages_to_render=[1, 2, 3, 4], height=800)
+            
         else:
             st.success("All PDFs have been reviewed!")
             
