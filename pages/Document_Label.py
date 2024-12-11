@@ -54,7 +54,7 @@ def get_reviewed_urls():
         service = build('sheets', 'v4', credentials=creds)
         
         # Get all reviewed URLs from Google Sheet
-        sheet_id = st.secrets["GOOGLE_SHEETS_ID"]
+        sheet_id = st.secrets["google_sheet_id"]
         range_name = 'Sheet2!A:A'  # First column contains URLs
         result = service.spreadsheets().values().get(
             spreadsheetId=sheet_id,
