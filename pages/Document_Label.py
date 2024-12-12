@@ -119,8 +119,8 @@ def get_sheet_data(selected_sheet):
         # Add row numbers before filtering
         df['sheet_row'] = range(2, len(df) + 2)  # +2 because sheet is 1-indexed and we skipped header
         
-        # Filter rows where verified is "no"
-        df = df[df['verified'].fillna('no') == 'no'].reset_index(drop=True)
+        # Filter rows where verified is not equal to yes
+        df = df[df['verified'].fillna('no') != 'yes'].reset_index(drop=True)
         
         logging.info(f"Found {len(df)} unverified documents")
         return df
@@ -147,6 +147,10 @@ def main():
     # Load data from selected sheet instead of CSV
     try:
         df = get_sheet_data(selected_sheet)
+        
+        # number of outstanding documents
+        outstanding_documents = len(df)
+        st.metric("Outstanding documents", outstanding_documents)
         
         if df.empty:
             st.success("All documents have been verified!")
