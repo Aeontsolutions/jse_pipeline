@@ -10,39 +10,7 @@ import logging
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def update_google_sheet(url, proposed_name):
-    creds = Credentials(
-        None,
-        refresh_token=st.secrets["google_credentials"]["refresh_token"],
-        token_uri=st.secrets["google_credentials"]["token_uri"],
-        client_id=st.secrets["google_credentials"]["client_id"],
-        client_secret=st.secrets["google_credentials"]["client_secret"]
-    )
-    service = build('sheets', 'v4', credentials=creds)
-    
-    # Append to Google Sheet
-    sheet_id = st.secrets["google_sheet_id"]
-    range_name = 'Sheet2!A:B'  # Just URL and name
-    values = [[url, proposed_name]]
-    body = {'values': values}
-    
-    service.spreadsheets().values().append(
-        spreadsheetId=sheet_id,
-        range=range_name,
-        valueInputOption='RAW',
-        insertDataOption='INSERT_ROWS',
-        body=body
-    ).execute()
-
-def download_pdf_from_url(url):
-    response = requests.get(url)
-    if response.status_code == 200:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-            tmp_file.write(response.content)
-            return tmp_file.name
-    return None
-
-def get_reviewed_urls():
+def get_available_sheets():
     try:
         creds = Credentials(
             None,
@@ -53,73 +21,163 @@ def get_reviewed_urls():
         )
         service = build('sheets', 'v4', credentials=creds)
         
-        # Get all reviewed URLs from Google Sheet
-        sheet_id = st.secrets["google_sheet_id"]
-        range_name = 'Sheet2!A:A'  # First column contains URLs
+        # Get spreadsheet metadata
+        sheet_metadata = service.spreadsheets().get(
+            spreadsheetId=st.secrets["google_sheet_id"]
+        ).execute()
+        
+        # Extract sheet names
+        sheets = sheet_metadata.get('sheets', [])
+        sheet_names = [sheet['properties']['title'] for sheet in sheets]
+        
+        return sheet_names
+    except Exception as e:
+        logging.error(f"Error getting sheet names: {str(e)}")
+        return []
+
+def download_pdf_from_guid(guid):
+    try:
+        # Remove '@' from the start of the URL if present
+        url = guid.lstrip('@') if guid.startswith('@') else guid
+        
+        response = requests.get(url)
+        if response.status_code == 200:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                tmp_file.write(response.content)
+                return tmp_file.name
+        else:
+            logging.error(f"Failed to download PDF from URL {url}. Status code: {response.status_code}")
+            return None
+    except Exception as e:
+        logging.error(f"Error downloading PDF from URL {url}: {str(e)}")
+        return None
+
+def update_google_sheet(row_number, selected_sheet, new_post_name, action):
+    try:
+        logging.info(f"Attempting to update sheet: {selected_sheet}, row: {row_number}, new name: {new_post_name}, action: {action}")
+        
+        creds = Credentials(
+            None,
+            refresh_token=st.secrets["google_credentials"]["refresh_token"],
+            token_uri=st.secrets["google_credentials"]["token_uri"],
+            client_id=st.secrets["google_credentials"]["client_id"],
+            client_secret=st.secrets["google_credentials"]["client_secret"]
+        )
+        service = build('sheets', 'v4', credentials=creds)
+        
+        # Update both the new_post_name and verified columns
+        update_range = f"'{selected_sheet}'!D{row_number}:E{row_number}"
+        update_body = {
+            'values': [[new_post_name, action]]
+        }
+        
+        logging.info(f"Updating range: {update_range}")
+        logging.info(f"Update body: {update_body}")
+        
+        result = service.spreadsheets().values().update(
+            spreadsheetId=st.secrets["google_sheet_id"],
+            range=update_range,
+            valueInputOption='RAW',
+            body=update_body
+        ).execute()
+        
+        logging.info(f"Update result: {result}")
+        st.success("Successfully updated the sheet!")
+            
+    except Exception as e:
+        st.error(f"Error updating sheet: {str(e)}")
+        logging.error(f"Error updating sheet: {str(e)}")
+        # Print full exception details
+        import traceback
+        logging.error(traceback.format_exc())
+
+def get_sheet_data(selected_sheet):
+    try:
+        creds = Credentials(
+            None,
+            refresh_token=st.secrets["google_credentials"]["refresh_token"],
+            token_uri=st.secrets["google_credentials"]["token_uri"],
+            client_id=st.secrets["google_credentials"]["client_id"],
+            client_secret=st.secrets["google_credentials"]["client_secret"]
+        )
+        service = build('sheets', 'v4', credentials=creds)
+        
+        # Get all data from the selected sheet
+        range_name = f"'{selected_sheet}'!A:E"  # Adjust range based on your columns
         result = service.spreadsheets().values().get(
-            spreadsheetId=sheet_id,
+            spreadsheetId=st.secrets["google_sheet_id"],
             range=range_name
         ).execute()
         
-        # Extract URLs from the result, skip header row
-        values = result.get('values', [])[1:]  # Skip header row
-        return {row[0] for row in values}  # Convert to set for faster lookup
+        values = result.get('values', [])
+        if not values:
+            return pd.DataFrame()
+            
+        # Convert to DataFrame
+        df = pd.DataFrame(values[1:], columns=values[0])  # First row as headers
+        
+        # Add row numbers before filtering
+        df['sheet_row'] = range(2, len(df) + 2)  # +2 because sheet is 1-indexed and we skipped header
+        
+        # Filter rows where verified is "no"
+        df = df[df['verified'].fillna('no') == 'no'].reset_index(drop=True)
+        
+        logging.info(f"Found {len(df)} unverified documents")
+        return df
+        
     except Exception as e:
-        logging.error(f"Error getting reviewed URLs: {str(e)}")
-        return set()
+        logging.error(f"Error getting sheet data: {str(e)}")
+        return pd.DataFrame()
 
 def main():
     st.title("PDF Name Validator")
     
-    # Initialize session state for tracking progress
-    if 'current_index' not in st.session_state:
-        st.session_state['current_index'] = 0
+    # Get available sheets and let user select one
+    sheet_names = get_available_sheets()
+    if not sheet_names:
+        st.error("No sheets found or error accessing Google Sheets")
+        return
+        
+    selected_sheet = st.selectbox(
+        "Select sheet to work with:",
+        options=sheet_names,
+        key="sheet_selector"
+    )
     
-    # Load CSV file and get reviewed URLs
+    # Load data from selected sheet instead of CSV
     try:
-        df = pd.read_csv(st.secrets["CSV_PATH"])
-        reviewed_urls = get_reviewed_urls()
+        df = get_sheet_data(selected_sheet)
         
-        # Filter out already reviewed documents
-        df = df[~df['old_guid'].isin(reviewed_urls)].reset_index(drop=True)
-        
-        if len(df) == 0:
-            st.success("All PDFs have been reviewed!")
+        if df.empty:
+            st.success("All documents have been verified!")
             return
             
-        if st.session_state['current_index'] < len(df):
-            current_row = df.iloc[st.session_state['current_index']]
-            
-            # Display PDF
-            pdf_url = current_row['old_guid']
-            initial_proposed_name = current_row['new_post_name']
-            
-            temp_file_path = download_pdf_from_url(pdf_url)
-            if temp_file_path:
+        # Display first unreviewed document
+        current_row = df.iloc[0]
+        sheet_row_number = current_row['sheet_row']  # Get the actual row number from sheet
+        
+        temp_file_path = download_pdf_from_guid(current_row['guid'])
+        if temp_file_path:
+            st.write(f"### Post Date: {current_row['post_date']}")
+            col1, col2 = st.columns([3, 1]) 
+            with col1:
+                st.info(f"### Is this a {selected_sheet}?")
                 st.write("### Proposed new name:")
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    # Add text input for editing the proposed name
-                    proposed_name = st.text_input("Edit name if needed:", 
-                                            value=initial_proposed_name,
-                                            key=f"name_input_{st.session_state['current_index']}")
-                    
-                with col2:
-                    if st.button("Approve", use_container_width=True):
-                        update_google_sheet(pdf_url, proposed_name)
-                        st.session_state['current_index'] += 1
-                        st.rerun()
-                
-                st.write("")
-
-            else:
-                st.error("Failed to download PDF")
+                proposed_name = st.text_input("Edit name if needed:", 
+                                            value=current_row['new_post_name'])
+            with col2:
+                if st.button("Verify", use_container_width=True):
+                    logging.info(f"Verify button clicked. Row: {sheet_row_number}, Sheet: {selected_sheet}, Name: {proposed_name}")
+                    update_google_sheet(sheet_row_number, selected_sheet, proposed_name, 'yes')
+                    st.rerun()
+                if st.button("Skip", use_container_width=True):
+                    logging.info(f"Skip button clicked. Row: {sheet_row_number}, Sheet: {selected_sheet}")
+                    update_google_sheet(sheet_row_number, selected_sheet, proposed_name, 'skipped')
+                    st.rerun()
             
-            # Display PDF viewer
             pdf_viewer(temp_file_path, pages_to_render=[1, 2, 3, 4], height=800)
             
-        else:
-            st.success("All PDFs have been reviewed!")
+            st.write("")
             
     except Exception as e:
         st.error(f"Error: {str(e)}")
