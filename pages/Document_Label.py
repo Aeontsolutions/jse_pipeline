@@ -144,6 +144,10 @@ def main():
         key="sheet_selector"
     )
     
+    # Initialize current_row_number in session state if it doesn't exist
+    if 'current_row_number' not in st.session_state:
+        st.session_state['current_row_number'] = 0
+    
     # Load data from selected sheet instead of CSV
     try:
         df = get_sheet_data(selected_sheet)
@@ -155,10 +159,14 @@ def main():
         if df.empty:
             st.success("All documents have been verified!")
             return
+        
+        # Make sure current_row_number doesn't exceed the dataframe length
+        if st.session_state['current_row_number'] >= len(df):
+            st.session_state['current_row_number'] = 0
             
-        # Display first unreviewed document
-        current_row = df.iloc[0]
-        sheet_row_number = current_row['sheet_row']  # Get the actual row number from sheet
+        # Display current unreviewed document
+        current_row = df.iloc[st.session_state['current_row_number']]
+        sheet_row_number = current_row['sheet_row']
         
         temp_file_path = download_pdf_from_guid(current_row['guid'])
         if temp_file_path:
@@ -177,6 +185,7 @@ def main():
                 if st.button("Skip", use_container_width=True):
                     logging.info(f"Skip button clicked. Row: {sheet_row_number}, Sheet: {selected_sheet}")
                     update_google_sheet(sheet_row_number, selected_sheet, proposed_name, 'skipped')
+                    st.session_state['current_row_number'] += 1
                     st.rerun()
             
             pdf_viewer(temp_file_path, pages_to_render=[1, 2, 3, 4], height=800)
