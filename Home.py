@@ -17,16 +17,16 @@ def get_available_sheets():
     try:
         creds = Credentials(
             None,
-            refresh_token=os.getenv("GOOGLE_REFRESH_TOKEN"),
-            token_uri=os.getenv("GOOGLE_TOKEN_URI"),
-            client_id=os.getenv("GOOGLE_CLIENT_ID"),
-            client_secret=os.getenv("GOOGLE_CLIENT_SECRET")
+            refresh_token=st.secrets["google_credentials"]["refresh_token"],
+            token_uri=st.secrets["google_credentials"]["token_uri"],
+            client_id=st.secrets["google_credentials"]["client_id"],
+            client_secret=st.secrets["google_credentials"]["client_secret"]
         )
         service = build('sheets', 'v4', credentials=creds)
         
         # Get spreadsheet metadata
         sheet_metadata = service.spreadsheets().get(
-            spreadsheetId=os.getenv("GOOGLE_SHEET_ID")
+            spreadsheetId=st.secrets["google_sheet_id"]
         ).execute()
         
         # Extract sheet names
@@ -45,16 +45,16 @@ def get_sheet_data(sheet_name):
     try:
         creds = Credentials(
             None,
-            refresh_token=os.getenv("GOOGLE_REFRESH_TOKEN"),
-            token_uri=os.getenv("GOOGLE_TOKEN_URI"),
-            client_id=os.getenv("GOOGLE_CLIENT_ID"),
-            client_secret=os.getenv("GOOGLE_CLIENT_SECRET")
+            refresh_token=st.secrets["google_credentials"]["refresh_token"],
+            token_uri=st.secrets["google_credentials"]["token_uri"],
+            client_id=st.secrets["google_credentials"]["client_id"],
+            client_secret=st.secrets["google_credentials"]["client_secret"]
         )
         service = build('sheets', 'v4', credentials=creds)
         
         # Get data from sheet
         result = service.spreadsheets().values().get(
-            spreadsheetId=os.getenv("GOOGLE_SHEET_ID"),
+            spreadsheetId=st.secrets["google_sheet_id"],
             range=sheet_name
         ).execute()
         
@@ -116,7 +116,7 @@ def main():
     col1.metric(f"Total rows", total_rows)
     col2.metric(f"Percent of master sheet", round(total_rows / 6676, 2))
     col3.metric(f"Number of verified", verified_rows)
-    col4.metric(f"Percent of master sheet verified", round(verified_rows / 6676, 2))
+    col4.metric(f"Percent of verified", round(verified_rows / total_rows, 2))
 
 if __name__ == "__main__":
     
