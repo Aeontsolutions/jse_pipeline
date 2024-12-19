@@ -28,7 +28,8 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import CSVLoader
 from langchain_google_vertexai import VertexAIEmbeddings
 from botocore.config import Config
-
+import pandas as pd
+from urllib.parse import urlparse
 T = TypeVar('T')  # For generic return type
 
 # Add this before loading environment variables
@@ -74,93 +75,65 @@ target_s3 = boto3.client(
 
 LABEL_PROMPT = """Which ONE of the following documents is this?
 
-    - JSE Weekly Bulletin 
-    - JSE Monthly Regulatory Report
-    - Company Acquistion Notices
-    - APO Prospectus
-    - IPO Prospectus
-    - Prospectus
-    - Notice of Appointment Letters
-    - Notice of Change in Managers
-    - Notice of Disposal
-    - Notice of Resignation
-    - Notice of Trading in Shares
-    - Notice of Dividend Consideration
-    - Notice of Dividend Declaration
-    - Circular Letter to Shareholders
-    - Annual Meeting Documents 2024:
-      * Notice with Pre-registration Guidelines
-      * Management Proxy Circular
-      * Form of Proxy
-    - Notice of and Updates On Mergers
-    - NAV Reports: Daily/Unaudited
     - Annual Audited Financial Statements
     - First Quarter Financial Statements
     - Second Quarter Financial Statements
     - Third Quarter Financial Statements
     - Fourth Quarter Financial Statements
-    - Directors' Circulars
-    - Rights Issue Circular
-    - Take Over Bid Circular
 
     Provide the document type and company name in the following markdown JSON format, without any JSON formatting characters:
     ```{
         "document_type": "<exact match from list above>",
+        "document_date": "<YYYY-MM-DD>",
         "company_name": "<extracted company name>"
     }```
 
     If type cannot be determined, return:
     ```{
         "document_type": "Unknown",
+        "document_date": "Unknown",
         "company_name": "<extracted company name>"
     }```"""
 
-def list_s3_files():
+async def download_pdf_from_url(url: str, temp_file: str) -> bool:
     """
-    List all files in the specified S3 bucket.
-
-    Parameters:
-    - bucket_name (str): Name of the S3 bucket.
-
+    Download a PDF from a URL to a temporary file
+    Args:
+        url: URL of the PDF
+        temp_file: Path to save the temporary file
     Returns:
-    - List of file names in the bucket.
+        bool: True if successful, False otherwise
     """
-    files = []
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    content = await response.read()
+                    with open(temp_file, 'wb') as f:
+                        f.write(content)
+                    return True
+                else:
+                    logger.error(f"Failed to download {url}. Status: {response.status}")
+                    return False
+    except Exception as e:
+        logger.error(f"Error downloading {url}: {str(e)}")
+        return False
 
-    bucket_name = os.getenv("S3_BUCKET_NAME")
-    prefix = os.getenv("S3_PREFIX")
-    extension = ".pdf"  # Hardcoding to only search for PDFs
-
-    # List objects within the specified bucket with the specified prefix
-    paginator = s3.get_paginator('list_objects_v2')
-    pages = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
-    
-    logger.info(f"Listing files in {bucket_name} with prefix {prefix}")
-
-    for page in pages:
-        for obj in page.get('Contents', []):
-            if obj['Key'].endswith(extension):
-                files.append(obj['Key'])
-
-    return files
-
-def extract_pages(file_path, num_pages=3):
+async def extract_pages(url: str, num_pages=3):
     """
     Extract the first n pages of a PDF and convert them to image binaries
     Args:
-        file_path: S3 key path to the PDF file
+        url: URL to the PDF file
         num_pages: Number of pages to extract (default: 3)
     Returns:
         List of image binaries (bytes objects)
     """
-    # Create a temporary file to store the downloaded PDF
-    temp_file = '/tmp/temp.pdf'
-    bucket_name = os.getenv("S3_BUCKET_NAME")
+    temp_file = f'/tmp/{urlparse(url).path.split("/")[-1]}'
     
     try:
-        # Download the file from S3
-        logger.info(f"Downloading {file_path} from S3")
-        s3.download_file(bucket_name, file_path, temp_file)
+        logger.info(f"Downloading {url}")
+        if not await download_pdf_from_url(url, temp_file):
+            raise Exception(f"Failed to download {url}")
         
         # Process the downloaded file
         logger.info(f"Processing downloaded file")
@@ -266,7 +239,7 @@ def label_document(candidate_labels: list):
     
     return chain.invoke([message])
 
-def generate_new_name(company_name: str, symbol: str, document_type: str):
+def generate_new_name(company_name: str, symbol: str, document_type: str, document_date: str):
     """
     Generate new name and partition path for the document
     Returns tuple of (partition_path, new_filename)
@@ -281,8 +254,8 @@ def generate_new_name(company_name: str, symbol: str, document_type: str):
     document_type = document_type.lower()
     
     # Generate the partition path and filename
-    partition_path = f"{clean_company_name}/{document_type}"
-    new_filename = f"{clean_company_name}_{symbol}_{document_type}.pdf"
+    partition_path = f"{clean_company_name}/{document_type}/{document_date}"
+    new_filename = f"{clean_company_name}_{symbol}_{document_type}_{document_date}.pdf"
     
     return partition_path, new_filename
 
@@ -461,15 +434,17 @@ class DocumentProcessor:
             try:
                 company_name, symbol = await self.search_company(initial_company)
                 doc_type = await self.search_doc_type(initial_company)
+                document_date = initial_result.get('document_date', '')
                 # Update the result with the corrected company name
                 initial_result['company_name'] = company_name
                 initial_result['symbol'] = symbol
                 initial_result['document_type'] = doc_type
+                initial_result['document_date'] = document_date
             except Exception as e:
                 logger.warning(f"Company name search failed: {str(e)}. Using original name.")
                 initial_result['symbol'] = "unknown"
                 initial_result['document_type'] = "unknown"
-
+                initial_result['document_date'] = "unknown"
             return initial_result
 
         return await self.retry_handler.execute(api_call)
@@ -482,66 +457,33 @@ class DocumentProcessor:
         finally:
             self.rate_limiter.release()
 
-    async def upload_to_new_bucket(self, original_key: str, company_name: str, symbol: str, document_type: str) -> bool:
+    async def upload_to_new_bucket(self, original_key: str, company_name: str, symbol: str, document_type: str, document_date: str) -> bool:
         """
-        Upload renamed document to new bucket using different credentials with partitioning
+        Simulate uploading renamed document to new bucket and record the change
         Args:
-            original_key: Original S3 key
+            original_key: Original file path
             company_name: Clean company name for partitioning
             symbol: Symbol for partitioning
             document_type: Document type for partitioning
+            document_date: Document date for partitioning
         Returns:
             bool: True if successful, False otherwise
         """
-        source_bucket = os.getenv("S3_BUCKET_NAME")
-        target_bucket = os.getenv("S3_TARGET_BUCKET")
-        
         try:
             # Generate partition path and filename
-            partition_path, new_filename = generate_new_name(company_name, symbol, document_type)
+            partition_path, new_filename = generate_new_name(company_name, symbol, document_type, document_date)
             
-            # Create a safe temporary filename using the original file's name
-            temp_filename = os.path.basename(original_key)  # Get just the filename
-            temp_path = os.path.join('/tmp', temp_filename)  # Create full temp path
-            
-            logger.info(f"Downloading {original_key} to {temp_path}")
-            
-            # Download from source bucket
-            await asyncio.get_event_loop().run_in_executor(
-                self.executor,
-                lambda: source_s3.download_file(
-                    source_bucket,
-                    original_key,
-                    temp_path
-                )
-            )
-            
-            # Generate the full target key
+            # Simulate the full target key
             full_key = f"{partition_path}/{new_filename}"
             
-            logger.info(f"Uploading from {temp_path} to {target_bucket}/{full_key}")
+            logger.info(f"Simulated upload for {original_key} to {full_key}")
             
-            # Upload to target bucket
-            await asyncio.get_event_loop().run_in_executor(
-                self.executor,
-                lambda: target_s3.upload_file(
-                    temp_path,
-                    target_bucket,
-                    full_key
-                )
-            )
-            
-            logger.info(f"Successfully copied {original_key} to {target_bucket}/{full_key}")
+            # Return success and the new path
             return True, full_key
             
         except Exception as e:
-            logger.error(f"Failed to copy {original_key} to new bucket: {str(e)}")
+            logger.error(f"Failed to simulate upload for {original_key}: {str(e)}")
             return False, None
-            
-        finally:
-            # Clean up temporary file
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
 
     async def worker(self, worker_id: int):
         """Worker process that handles file processing"""
@@ -557,8 +499,6 @@ class DocumentProcessor:
                     # Process PDF in thread pool with retry and progress
                     try:
                         img_binaries = await self.retry_handler.execute(
-                            asyncio.get_event_loop().run_in_executor,
-                            self.executor,
                             extract_pages,
                             work_item.file_path
                         )
@@ -583,16 +523,18 @@ class DocumentProcessor:
                     company_name = str(final_label.get('company_name', ''))
                     symbol = str(final_label.get('symbol', ''))
                     document_type = str(final_label.get('document_type', ''))
-
-                    # Upload to new bucket with partitioning
+                    document_date = str(final_label.get('document_date', ''))
+                    
+                    # Simulate upload and record the change
                     upload_success, full_key = await self.upload_to_new_bucket(
                         work_item.file_path,
                         company_name,
                         symbol,
-                        document_type
+                        document_type,
+                        document_date
                     )
 
-                    # Store result with upload status and full path
+                    # Store result with simulated upload status and full path
                     work_item.status = 'completed' if upload_success else 'upload_failed'
                     work_item.result = {
                         'original_name': work_item.file_path,
@@ -727,7 +669,7 @@ async def process_single_file(file: str, executor: ThreadPoolExecutor):
         # Process images concurrently
         tasks = [
             get_candidate_labels_async(img)
-            for img in img_binaries
+            for img in  img_binaries
         ]
         candidate_labels = await asyncio.gather(*tasks)
         
@@ -771,12 +713,16 @@ async def get_candidate_labels_async(img_binary: bytes):
 
 async def main():
     try:
-        # Get list of files
-        print("Fetching files from S3...")
-        files = list_s3_files()
-        # total_files = len(files)
-        # Select first 100 files
-        files = files[:100]
+        # Instead of fetching from S3, read URLs from CSV
+        print("Reading URLs from CSV...")
+        files_df = pd.read_csv("file_listing.csv")
+        files_df = files_df[files_df['category'].isin([
+            'Annual Reports',
+            'Quarterly Financial Statements'
+        ])]
+        
+        # Assuming there's a 'url' column in your CSV
+        files = files_df['guid'].tolist()
         total_files = len(files)
         
         print(f"\nStarting processing of {total_files} files")
