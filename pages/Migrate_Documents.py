@@ -4,7 +4,8 @@ from utils.gsheet_operations import get_available_sheets, get_sheet_data
 import boto3
 import logging
 import tempfile
-import botocore
+import concurrent.futures
+import os
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_data_for_migration():
@@ -15,7 +16,13 @@ def get_data_for_migration():
     merged_data = all_data.merge(origin, on=["guid", "post_name", "post_date"], how="inner")
     return merged_data
 
-def migrate_documents(destination, data):
+def migrate_documents_batch(destination, data_batch):
+    """
+    Migrate a batch of documents from source to destination S3 bucket.
+    Args:
+        destination (str): Destination identifier (e.g., "ATS")
+        data_batch (pd.DataFrame): DataFrame containing batch of migration data
+    """
     try:    
         source_client = boto3.client(
             's3', 
@@ -23,10 +30,9 @@ def migrate_documents(destination, data):
             aws_access_key_id=st.secrets.JSE_ACCESS_KEY_ID,
             aws_secret_access_key=st.secrets.JSE_SECRET_ACCESS_KEY
         )
-
     except Exception as e:
         logging.error(f"Error creating source client: {e}")
-        return
+        raise e
     
     if destination == "Migrate to ATS":
         try:
@@ -38,22 +44,46 @@ def migrate_documents(destination, data):
             )
         except Exception as e:
             logging.error(f"Error creating destination client: {e}")
-            return
-        
+            raise e
     else:
         destination_client = source_client
     
-    try:
-        for index, row in data.iterrows():
-            with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                source_client.download_file(st.secrets.JSE_BUCKET_NAME, row['origin_file_loc'], temp_file.name)
-                destination_client.upload_file(temp_file.name, st.secrets.ATS_TARGET_BUCKET, row['destination_file_loc'])
-    except Exception as e:
-        logging.error(f"Error downloading or uploading files: {e}")
-        return
+    results = []
+    # Use ThreadPoolExecutor for parallel processing
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_file = {}
+        
+        for _, row in data_batch.iterrows():
+            future = executor.submit(
+                transfer_single_file,
+                source_client,
+                destination_client,
+                row['origin_file_loc'],
+                row['destination_file_loc'],
+                st.secrets.JSE_BUCKET_NAME,
+                st.secrets.ATS_TARGET_BUCKET
+            )
+            future_to_file[future] = row['origin_file_loc']
+        
+        for future in concurrent.futures.as_completed(future_to_file):
+            file_path = future_to_file[future]
+            try:
+                future.result()
+                results.append((file_path, True, None))
+            except Exception as e:
+                results.append((file_path, False, str(e)))
     
-    st.success("Documents migrated successfully")
-    
+    return results
+
+def transfer_single_file(source_client, dest_client, source_path, dest_path, source_bucket, dest_bucket):
+    """Helper function to transfer a single file"""
+    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+        try:
+            source_client.download_file(source_bucket, source_path, temp_file.name)
+            dest_client.upload_file(temp_file.name, dest_bucket, dest_path)
+        finally:
+            os.unlink(temp_file.name)  # Clean up temp file
+
 st.title("Migrate Documents")
 st.write("""
          This page is used to migrate documents to the S3 bucket.
@@ -109,25 +139,48 @@ with col2:
         # Create a status message
         status_text = st.empty()
         
-        # Wrap the migration in a try-finally to ensure we clean up the warning
+        # Keep track of successful and failed migrations
+        success_count = 0
+        failed_files = []
+        
         try:
-            for index, row in enumerate(merged_data.iterrows()):
+            # Process in batches of 50 files
+            BATCH_SIZE = 50
+            for batch_start in range(0, len(merged_data), BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, len(merged_data))
+                current_batch = merged_data.iloc[batch_start:batch_end]
+                
                 # Update status message
-                status_text.text(f"Migrating file {index + 1} of {total_files}: {row[1]['origin_file_loc']}")
+                status_text.text(f"Migrating batch {batch_start//BATCH_SIZE + 1} of {(len(merged_data)-1)//BATCH_SIZE + 1}")
+                
+                # Process the batch
+                results = migrate_documents_batch(area_to_migrate, current_batch)
+                
+                # Process results
+                for file_path, success, error in results:
+                    if success:
+                        success_count += 1
+                    else:
+                        failed_files.append((file_path, error))
                 
                 # Update progress bar
-                progress_bar.progress((index + 1) / total_files)
-                
-                # Your existing migration code here
-                migrate_documents(area_to_migrate, pd.DataFrame([row[1]]))
-                
-            # Success message
-            warning.success("✅ Migration completed successfully! You can now close this tab.")
+                progress_bar.progress(batch_end / total_files)
+            
+            # Final status message
+            if len(failed_files) == 0:
+                warning.success(f"✅ Migration completed successfully! {success_count} files migrated.")
+            else:
+                warning.warning(f"⚠️ Migration completed with some issues.\n"
+                              f"Successfully migrated: {success_count} files\n"
+                              f"Failed: {len(failed_files)} files")
+                # Show failed files in an expander
+                with st.expander("Show failed files"):
+                    for file, error in failed_files:
+                        st.error(f"{file}: {error}")
             
         except Exception as e:
-            # Error message
-            warning.error(f"❌ An error occurred during migration: {str(e)}")
-            
+            warning.error(f"❌ Batch processing error: {str(e)}")
+        
         finally:
             # Clean up the status message
             status_text.empty()
