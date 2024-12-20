@@ -18,7 +18,7 @@ if 'migration_data' not in st.session_state:
         merged_data = all_data.merge(origin, on=["guid", "post_name", "post_date"], how="inner")
         
         # create a new column called "doc_type"
-        merged_data["doc_type"] = merged_data["category"].apply(lambda x: "bulletin" if x.lower() == "bulletins" else "report")
+        merged_data["doc_type"] = merged_data["new_post_name"].apply(lambda x: "bulletin" if x.split("-")[0].lower() == "jse_weekly_bulletin" else x.split("-")[2].lower())
 
         # get the post_year and post_month
         merged_data["post_year"] = pd.to_datetime(merged_data["post_date"]).dt.year
@@ -26,6 +26,12 @@ if 'migration_data' not in st.session_state:
 
         # lower the InstrumentName column and replace spaces with underscores
         merged_data["InstrumentName"] = merged_data["InstrumentName"].str.lower().str.replace(" ", "_")
+
+        # create the origin_file_name column
+        merged_data["origin_file_loc"] = merged_data["guid"].str.replace(
+            "https://www.jamstockex.com/wp-content/uploads/", 
+            "all-files/"
+        )
 
         # Store in session state
         st.session_state.migration_data = merged_data
@@ -115,10 +121,10 @@ with col1:
 
     if area_to_migrate == "Migrate to ATS":
         destination_fldr = "organized/"
-        st.session_state.migration_data["destination_file_loc"] = destination_fldr + st.session_state.migration_data["InstrumentName"] + "/" + st.session_state.migration_data["post_year"].astype(str) + "/" + st.session_state.migration_data["post_month"].astype(str) + "/" + st.session_state.migration_data["new_post_name"]
+        st.session_state.migration_data["destination_file_loc"] = destination_fldr + st.session_state.migration_data["InstrumentName"] + "/" + st.session_state.migration_data["doc_type"] + "/" + st.session_state.migration_data["post_year"].astype(str) + "/" + st.session_state.migration_data["post_month"].astype(str) + "/" + st.session_state.migration_data["new_post_name"]
     else:
         destination_fldr = "organized/"
-        st.session_state.migration_data["destination_file_loc"] = destination_fldr + st.session_state.migration_data["InstrumentName"] + "/" + st.session_state.migration_data["post_year"].astype(str) + "/" + st.session_state.migration_data["post_month"].astype(str) + "/" + st.session_state.migration_data["new_post_name"]
+        st.session_state.migration_data["destination_file_loc"] = destination_fldr + st.session_state.migration_data["InstrumentName"] + "/" + st.session_state.migration_data["doc_type"] + "/" + st.session_state.migration_data["post_year"].astype(str) + "/" + st.session_state.migration_data["post_month"].astype(str) + "/" + st.session_state.migration_data["new_post_name"]
 
 with col2:
     if st.button("Migrate Documents"):
