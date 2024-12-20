@@ -4,6 +4,7 @@ from utils.gsheet_operations import get_available_sheets, get_sheet_data
 import boto3
 import logging
 import tempfile
+import botocore
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_data_for_migration():
@@ -22,20 +23,12 @@ def migrate_documents(destination, data):
             aws_access_key_id=st.secrets.JSE_ACCESS_KEY_ID,
             aws_secret_access_key=st.secrets.JSE_SECRET_ACCESS_KEY
         )
-        response = source_client.list_objects_v2(
-            Bucket=st.secrets.JSE_BUCKET_NAME,
-            # Prefix='all_files/',  # Adjust this to match your path prefix
-            MaxKeys=5
-        )
-        logging.info("Files found in bucket:")
-        for obj in response.get('Contents', []):
-            logging.info(f"- {obj['Key']}")
 
     except Exception as e:
         logging.error(f"Error creating source client: {e}")
         return
     
-    if destination == "ATS":
+    if destination == "Migrate to ATS":
         try:
             destination_client = boto3.client(
                 's3', 
@@ -95,10 +88,10 @@ with col1:
     if area_to_migrate == "Migrate to ATS":
         destination_fldr = "organized/"
         # create a new column called "destination_file_loc" 
-        merged_data["destination_file_loc"] = destination_fldr + merged_data["InstrumentName"] + "/" + merged_data["post_year"].astype(str) + "/" + merged_data["post_month"].astype(str) + "/" + merged_data["new_post_name"]
+        merged_data["destination_file_loc"] = destination_fldr + merged_data["InstrumentName"] + "/" + merged_data["doc_type"] + "/" + merged_data["post_year"].astype(str) + "/" + merged_data["post_month"].astype(str) + "/" + merged_data["new_post_name"]
     else:
         destination_fldr = "organized/"
-        merged_data["destination_file_loc"] = destination_fldr + merged_data["InstrumentName"] + "/" + merged_data["post_year"].astype(str) + "/" + merged_data["post_month"].astype(str) + "/" + merged_data["new_post_name"]
+        merged_data["destination_file_loc"] = destination_fldr + merged_data["InstrumentName"] + "/" + merged_data["doc_type"] + "/" + merged_data["post_year"].astype(str) + "/" + merged_data["post_month"].astype(str) + "/" + merged_data["new_post_name"]
         
 
 with st.expander("Data Preview"):
@@ -107,4 +100,34 @@ with st.expander("Data Preview"):
     
 with col2:
     if st.button("Migrate Documents"):
-        migrate_documents(area_to_migrate, merged_data)
+        warning = st.warning("⚠️ Please do not close this tab while migration is in progress...", icon="⚠️")
+        
+        # Create a progress bar
+        progress_bar = st.progress(0)
+        total_files = len(merged_data)
+        
+        # Create a status message
+        status_text = st.empty()
+        
+        # Wrap the migration in a try-finally to ensure we clean up the warning
+        try:
+            for index, row in enumerate(merged_data.iterrows()):
+                # Update status message
+                status_text.text(f"Migrating file {index + 1} of {total_files}: {row[1]['origin_file_loc']}")
+                
+                # Update progress bar
+                progress_bar.progress((index + 1) / total_files)
+                
+                # Your existing migration code here
+                migrate_documents(area_to_migrate, pd.DataFrame([row[1]]))
+                
+            # Success message
+            warning.success("✅ Migration completed successfully! You can now close this tab.")
+            
+        except Exception as e:
+            # Error message
+            warning.error(f"❌ An error occurred during migration: {str(e)}")
+            
+        finally:
+            # Clean up the status message
+            status_text.empty()
