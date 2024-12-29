@@ -24,8 +24,8 @@ if 'migration_data' not in st.session_state:
         merged_data["post_year"] = pd.to_datetime(merged_data["post_date"]).dt.year
         merged_data["post_month"] = pd.to_datetime(merged_data["post_date"]).dt.month
 
-        # lower the new_company column and replace spaces with underscores
-        merged_data["new_company"] = merged_data["new_company"].str.lower().str.replace(" ", "_")
+        # lower the InstrumentName column and replace spaces with underscores
+        merged_data["InstrumentName"] = merged_data["InstrumentName"].str.lower().str.replace(" ", "_")
 
         # create the origin_file_name column
         merged_data["origin_file_loc"] = merged_data["guid"].str.replace(
@@ -121,10 +121,10 @@ with col1:
 
     if area_to_migrate == "Migrate to ATS":
         destination_fldr = "organized/"
-        st.session_state.migration_data["destination_file_loc"] = destination_fldr + st.session_state.migration_data["new_company"] + "/" + st.session_state.migration_data["doc_type"] + "/" + st.session_state.migration_data["post_year"].astype(str) + "/" + st.session_state.migration_data["new_post_name"]
+        st.session_state.migration_data["destination_file_loc"] = destination_fldr + st.session_state.migration_data["InstrumentName"] + "/" + st.session_state.migration_data["doc_type"] + "/" + st.session_state.migration_data["post_year"].astype(str) + "/" + st.session_state.migration_data["post_month"].astype(str) + "/" + st.session_state.migration_data["new_post_name"]
     else:
         destination_fldr = "organized/"
-        st.session_state.migration_data["destination_file_loc"] = destination_fldr + st.session_state.migration_data["new_company"] + "/" + st.session_state.migration_data["doc_type"] + "/" + st.session_state.migration_data["post_year"].astype(str) + "/" + st.session_state.migration_data["new_post_name"]
+        st.session_state.migration_data["destination_file_loc"] = destination_fldr + st.session_state.migration_data["InstrumentName"] + "/" + st.session_state.migration_data["doc_type"] + "/" + st.session_state.migration_data["post_year"].astype(str) + "/" + st.session_state.migration_data["post_month"].astype(str) + "/" + st.session_state.migration_data["new_post_name"]
 
 with col2:
     if st.button("Migrate Documents"):
