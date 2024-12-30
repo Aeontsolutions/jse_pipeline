@@ -21,7 +21,8 @@ if 'migration_data' not in st.session_state:
         origin = pd.read_csv("file_listing.csv")
         logging.info(f"Origin Data: {origin.shape[0]}")
 
-        merged_data = all_data.merge(origin, on=["guid", "post_name", "post_date"], how="inner")
+        # merged_data = all_data.merge(origin, on=["guid", "post_name", "post_date"], how="inner")
+        merged_data = all_data.merge(origin, on=["guid"], how="inner")
         logging.info(f"Merged Data: {merged_data.shape[0]}")
         
         # create a new column called "doc_type"
@@ -32,7 +33,8 @@ if 'migration_data' not in st.session_state:
         merged_data["post_month"] = pd.to_datetime(merged_data["post_date"]).dt.month
 
         # lower the new_company column and replace spaces with underscores
-        merged_data["new_company"] = merged_data["new_company"].str.lower().str.replace(" ", "_")
+        # merged_data["new_company"] = merged_data["new_company"].str.lower().str.replace(" ", "_")
+        merged_data["new_company"] = merged_data["new_company"].str.lower()
 
         # create the origin_file_name column
         merged_data["origin_file_loc"] = merged_data["guid"].str.replace(
