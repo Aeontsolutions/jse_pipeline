@@ -6,7 +6,7 @@ import logging
 import tempfile
 import concurrent.futures
 import os
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 if 'migration_data' not in st.session_state:
     # Load data only once
@@ -24,6 +24,7 @@ if 'migration_data' not in st.session_state:
         # merged_data = all_data.merge(origin, on=["guid", "post_name", "post_date"], how="inner")
         merged_data = all_data.merge(origin, on=["guid"], how="inner")
         logging.info(f"Merged Data: {merged_data.shape[0]}")
+        logging.info(f"Merged Columns: {merged_data.columns}")
         
         # create a new column called "doc_type"
         merged_data["doc_type"] = merged_data["new_post_name"].apply(lambda x: "bulletin" if x.split("-")[0].lower() == "jse_weekly_bulletin" else x.split("-")[2].lower())
