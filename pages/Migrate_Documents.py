@@ -13,9 +13,16 @@ if 'migration_data' not in st.session_state:
     with st.spinner("Loading data..."):
         available_sheets = get_available_sheets()
         all_data = pd.concat([get_sheet_data(sheet).assign(sheet_name=sheet) for sheet in available_sheets], ignore_index=True)
+        logging.info(f"All Data: {all_data.shape[0]}")
+
         all_data = all_data[all_data["verified"] == "yes"]
+        logging.info(f"Verified Data: {all_data.shape[0]}")
+
         origin = pd.read_csv("file_listing.csv")
+        logging.info(f"Origin Data: {origin.shape[0]}")
+
         merged_data = all_data.merge(origin, on=["guid", "post_name", "post_date"], how="inner")
+        logging.info(f"Merged Data: {merged_data.shape[0]}")
         
         # create a new column called "doc_type"
         merged_data["doc_type"] = merged_data["new_post_name"].apply(lambda x: "bulletin" if x.split("-")[0].lower() == "jse_weekly_bulletin" else x.split("-")[2].lower())
@@ -35,6 +42,9 @@ if 'migration_data' not in st.session_state:
 
         # Store in session state
         st.session_state.migration_data = merged_data
+
+        logging.info(f"Merged Data End: {merged_data.shape[0]}")
+        logging.info("Completed Data Load")
 
 def migrate_documents_batch(destination, data_batch):
     """
