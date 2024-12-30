@@ -30,8 +30,8 @@ if 'migration_data' not in st.session_state:
         merged_data["doc_type"] = merged_data["new_post_name"].apply(lambda x: "bulletin" if x.split("-")[0].lower() == "jse_weekly_bulletin" else x.split("-")[2].lower())
 
         # get the post_year and post_month
-        merged_data["post_year"] = pd.to_datetime(merged_data["post_date"]).dt.year
-        merged_data["post_month"] = pd.to_datetime(merged_data["post_date"]).dt.month
+        merged_data["post_year"] = pd.to_datetime(merged_data["post_date_x"]).dt.year
+        merged_data["post_month"] = pd.to_datetime(merged_data["post_date_x"]).dt.month
 
         # lower the new_company column and replace spaces with underscores
         # merged_data["new_company"] = merged_data["new_company"].str.lower().str.replace(" ", "_")
