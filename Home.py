@@ -39,7 +39,7 @@ def main():
     col1.metric(f"Total rows", total_rows)
     col2.metric(f"Percent of master sheet", f"{round(total_rows / 6676, 2)}%")
     col3.metric(f"Number of verified", verified_rows)
-    col4.metric(f"Percent of total rows", f"{round(verified_rows / total_rows, 2)}%")
+    col4.metric(f"Percent of total rows", f"{round(verified_rows / total_rows * 100, 2)}%")
 
 if __name__ == "__main__":
     main()
